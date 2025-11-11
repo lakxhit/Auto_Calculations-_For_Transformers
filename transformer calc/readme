@@ -1,1 +1,41 @@
+# Transformer Auto-Calculation Suite (for Mahati Industries)
 
+> **Note:** This is a custom-built web application **specially made for Mahati Industries** to support its engineering and design teams.
+
+## 🚀 Overview
+
+This project is a comprehensive suite of web-based calculators that consolidate numerous complex transformer design and analysis calculations into a single, easy-to-use interface. It is designed to automate, standardize, and accelerate the technical design process specifically for Mahati Industries.
+
+### How to Run This Project
+To access all the calculation tools, simply open the **`Main page.html`** file in your web browser. This Main Page acts as the central hub and provides links to all the individual calculation modules.
+
+---
+
+## 🧮 Calculations Included
+
+This suite provides dedicated modules for the following critical transformer calculations:
+
+* Current Density Calculation
+* Eddy and Stray Loss Calculation
+* Losses & Copper Weight Calculation
+* No Load Current Calculation
+* No Load Losses
+* Cooling Calculation
+* Core Hotspot Temp Calculation
+* Hotspot Temp Rise Calculation
+* Impedance Calculation
+* Inrush Current Calculation
+* PRV Calculation
+* Regulation Calculation
+* Short Circuit Calculation Thermal (Normal tap)
+* Short Circuit Calculation Dynamic (at normal tap)
+* Short Circuit Calculation Dynamic (at negative tap)
+* Short Circuit Calculator (Thermal)
+
+## 💻 Technology
+
+This is a lightweight, frontend-only tool built with:
+
+* **HTML5:** For the structure of the calculator pages.
+* **CSS3:** For styling and user interface.
+* **JavaScript:** For all the core engineering calculation logic.
