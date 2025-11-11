@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hot Spot Temperature Rise Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper .bg-gray-50 { background-color: transparent !important; }
+            #print-wrapper .bg-green-50 { background-color: transparent !important; }
+            #print-wrapper .bg-red-50 { background-color: transparent !important; }
+            #print-wrapper .bg-yellow-50 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        /* Formal report section style from PRV example */
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        /* A simple box for showing the formula, like in the PRV example */
+        .formula-box { background-color: #f9fafb; padding: 12px; border-left: 4px solid #d1d5db; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 0.875rem; }
+         /* Table style from PRV report */
+        .calc-table { width: 100%; margin: 12px 0; }
+        .calc-table td { padding: 6px 0; vertical-align: top; }
+        .calc-table .label { width: 60%; font-weight: 500; }
+        .calc-table .equals { width: 5%; text-align: center; }
+        .calc-table .value { width: 35%; font-weight: bold; }
+        .formula-text { font-family: 'Courier New', monospace; font-size: 0.9em; color: #444; margin: 5px 0; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Metadata for all input fields, ordered with indexes
+            const inputFieldsMetadata = {
+                // IV Winding
+                iv_rating: { label: "IV Winding: Rating", unit: "MVA", index: 1 },
+                iv_onanMVA: { label: "IV Winding: ONAN", unit: "MVA", index: 2 },
+                iv_ofafMVA: { label: "IV Winding: OFAF", unit: "MVA", index: 3 },
+                iv_onanMVA2: { label: "IV Winding: ONAN (2)", unit: "MVA", index: 4 },
+                iv_current: { label: "IV Winding: Current", unit: "Amps", index: 5 },
+                iv_conductorWidth: { label: "IV Winding: Conductor width", unit: "mm", index: 6 },
+                iv_conductorThk: { label: "IV Winding: Conductor thk", unit: "mm", index: 7 },
+                iv_paperCovering: { label: "IV Winding: Paper covering", unit: "mm", index: 8 },
+                iv_blockWidth: { label: "IV Winding: Block width", unit: "mm", index: 9 },
+                iv_conductorWidthPaper: { label: "IV Winding: Conductor width + 2x Paper Insn", unit: "mm", index: 10 },
+                iv_currentDensityONAN: { label: "IV Winding: Current density at ONAN", unit: "A/mm²", index: 11 },
+                iv_windingMeanDiameter: { label: "IV Winding: Winding mean diameter", unit: "mm", index: 12 },
+                iv_radialDepth: { label: "IV Winding: Radial depth", unit: "mm", index: 13 },
+                iv_noOfBlocks: { label: "IV Winding: No. of blocks/circle", unit: "", index: 14 },
+                iv_avgThicknessBlock: { label: "IV Winding: Average thickness of block", unit: "mm", index: 15 },
+                iv_widthOfBlock: { label: "IV Winding: Width of block", unit: "mm", index: 16 },
+                iv_i2r: { label: "IV Winding: I²R", unit: "W/kg", index: 17 },
+                iv_deltaT1: { label: "IV Winding: ΔT₁", unit: "°C", index: 18 },
+                
+                // HV Winding
+                hv_rating: { label: "HV Winding: Rating", unit: "MVA", index: 19 },
+                hv_onanMVA: { label: "HV Winding: ONAN", unit: "MVA", index: 20 },
+                hv_ofafMVA: { label: "HV Winding: OFAF", unit: "MVA", index: 21 },
+                hv_onanMVA2: { label: "HV Winding: ONAN (2)", unit: "MVA", index: 22 },
+                hv_current: { label: "HV Winding: Current", unit: "Amps", index: 23 },
+                hv_conductorWidth: { label: "HV Winding: Conductor width", unit: "mm", index: 24 },
+                hv_conductorThk: { label: "HV Winding: Conductor thk", unit: "mm", index: 25 },
+                hv_paperCovering: { label: "HV Winding: Paper covering", unit: "mm", index: 26 },
+                hv_blockWidth: { label: "HV Winding: Block width", unit: "mm", index: 27 },
+                hv_conductorWidthPaper: { label: "HV Winding: Conductor width + 2x Paper Insn", unit: "mm", index: 28 },
+                hv_currentDensityONAN: { label: "HV Winding: Current density at ONAN", unit: "A/mm²", index: 29 },
+                hv_windingMeanDiameter: { label: "HV Winding: Winding mean diameter", unit: "mm", index: 30 },
+                hv_radialDepth: { label: "HV Winding: Radial depth", unit: "mm", index: 31 },
+                hv_noOfBlocks: { label: "HV Winding: No. of blocks/circle", unit: "", index: 32 },
+                hv_avgThicknessBlock: { label: "HV Winding: Average thickness of block", unit: "mm", index: 33 },
+                hv_widthOfBlock: { label: "HV Winding: Width of block", unit: "mm", index: 34 },
+                hv_i2r: { label: "HV Winding: I²R", unit: "W/kg", index: 35 },
+                hv_deltaT1: { label: "HV Winding: ΔT₁", unit: "°C", index: 36 },
+                
+                // Additional parameters
+                guaranteedTopOilRise: { label: "Guaranteed Top Oil rise", unit: "°C", index: 37 },
+                guaranteedAvgWindingRise: { label: "Guaranteed Average winding rise", unit: "°C", index: 38 },
+                designedTopOilRise: { label: "Designed Top oil Rise", unit: "°C", index: 39 },
+                hotSpotFactorHV: { label: "Hot Spot Factor for HV (H)", unit: "", index: 40, default: "1.3" },
+                hotSpotFactorIV: { label: "Hot Spot Factor for IV (H)", unit: "", index: 41, default: "1.3" },
+                weightedAmbient: { label: "Weighted ambient temperature", unit: "°C", index: 42, default: "32" },
+            };
+
+            // State for form, report, and errors
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            // Input change handler with validation
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        errorMessage = 'Please enter a valid number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            // Full form validation
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else {
+                        const numValue = parseFloat(value);
+                        if (isNaN(numValue) || numValue < 0) {
+                            newErrors[key] = 'Please enter a valid number.';
+                            isValid = false;
+                        }
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            // Print handler
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            // Main calculation logic
+            const calculateHotSpot = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const results = {
+                    iv: {},
+                    hv: {},
+                };
+
+                // Calculate for IV Winding
+                const iv = results.iv;
+                iv.heatFluxDensity = (inputs.iv_i2r * inputs.iv_currentDensityONAN * inputs.iv_conductorWidth) / 
+                                     (2 * (inputs.iv_conductorWidth + inputs.iv_conductorThk));
+                iv.deltaT2 = inputs.iv_deltaT1 * inputs.iv_conductorWidthPaper / 2;
+                iv.i1 = 1.1; // Standard value
+                iv.i2 = inputs.iv_deltaT1 / (inputs.iv_conductorWidthPaper / 2);
+                iv.thetaGrad = inputs.iv_deltaT1 * iv.i1 * iv.i2;
+
+                // Calculate for HV Winding
+                const hv = results.hv;
+                hv.heatFluxDensity = (inputs.hv_i2r * inputs.hv_currentDensityONAN * inputs.hv_conductorWidth) / 
+                                     (2 * (inputs.hv_conductorWidth + inputs.hv_conductorThk));
+                hv.deltaT2 = inputs.hv_deltaT1 * inputs.hv_conductorWidthPaper / 2;
+                hv.i1 = 1.1;
+                hv.i2 = inputs.hv_deltaT1 / (inputs.hv_conductorWidthPaper / 2);
+                hv.gFactor = 0.332; // Typical value
+                hv.thetaGrad = inputs.hv_deltaT1 * hv.i1 * hv.i2;
+
+                // Temperature Rise Calculations
+                results.avgOilRise = inputs.designedTopOilRise * 0.9;
+                results.avgWindingTempRiseHV = results.avgOilRise + hv.thetaGrad;
+                results.avgWindingTempRiseIV = results.avgOilRise + iv.thetaGrad;
+                
+                results.hotSpotTempRiseHV = (inputs.designedTopOilRise * 1.054) + 
+                                            (inputs.hotSpotFactorHV * hv.thetaGrad);
+                results.hotSpotTempRiseIV = (inputs.designedTopOilRise * 1.054) + 
+                                            (inputs.hotSpotFactorIV * iv.thetaGrad);
+                
+                results.hotSpotAbsoluteTempHV = results.hotSpotTempRiseHV + inputs.weightedAmbient;
+                results.hotSpotAbsoluteTempIV = results.hotSpotTempRiseIV + inputs.weightedAmbient;
+                
+                // Checks
+                results.checkAvgWindingRiseHV = results.avgWindingTempRiseHV <= inputs.guaranteedAvgWindingRise;
+                results.checkAvgWindingRiseIV = results.avgWindingTempRiseIV <= inputs.guaranteedAvgWindingRise;
+                // Assuming 88C limit for rise, 98C for absolute (as per doc)
+                results.checkHotSpotRiseHV = results.hotSpotTempRiseHV <= 88; 
+                results.checkHotSpotRiseIV = results.hotSpotTempRiseIV <= 88;
+                results.checkHotSpotAbsoluteHV = results.hotSpotAbsoluteTempHV <= 98;
+                results.checkHotSpotAbsoluteIV = results.hotSpotAbsoluteTempIV <= 98;
+
+
+                setReport({ ...results, inputs });
+            };
+
+            // Renders input row for the form
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center text-sm">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold text-sm">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step="any"
+                                    placeholder={`Enter ${meta.label}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap text-sm">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+            
+            // Renders input row for the report's summary table
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center text-xs">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium text-xs">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-xs"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+            
+            // Renders the main App component
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    {/* Header */}
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Hot Spot Temperature Rise Calculator
+                        </h1>
+                    </div>
+
+                    {/* Input Form Card */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Gradient & Hot Spot Calculation
+                        </h2>
+                        
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(name => renderInputRow(name))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateHotSpot}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Report Section */}
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-2 text-center text-blue-700">
+                                    CALCULATION OF HOT SPOT TEMPERATURE RISE
+                                </h2>
+                            </div>
+
+                            {/* Section 1: Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <table className="w-full text-xs border-collapse input-param-table">
+                                    <tbody>
+                                        {Object.keys(inputFieldsMetadata).map(name => renderReportInputRow(name))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 2: Gradient Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-4 text-blue-600">
+                                    2. GRADIENT CALCULATION
+                                </h3>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {/* IV Winding Results */}
+                                    <div className="border border-gray-300 p-4 rounded">
+                                        <h4 className="font-bold text-md mb-3 text-blue-700">2.1 IV Winding:</h4>
+                                        <table className="w-full text-sm">
+                                            <tbody>
+                                                <tr className="border-b"><td className="py-2 font-medium">W/m²</td><td className="py-2 text-right highlight">{report.iv.heatFluxDensity.toFixed(2)} W/m²</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">ΔT₂</td><td className="py-2 text-right highlight">{report.iv.deltaT2.toFixed(2)} °C</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">I₁</td><td className="py-2 text-right highlight">{report.iv.i1.toFixed(2)}</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">I₂</td><td className="py-2 text-right highlight">{report.iv.i2.toFixed(2)}</td></tr>
+                                                <tr className="bg-yellow-50"><td className="py-2 font-bold">θ grad (IV)</td><td className="py-2 text-right font-bold text-lg highlight">{report.iv.thetaGrad.toFixed(2)} °C</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    {/* HV Winding Results */}
+                                    <div className="border border-gray-300 p-4 rounded">
+                                        <h4 className="font-bold text-md mb-3 text-blue-700">2.2 HV Winding:</h4>
+                                        <table className="w-full text-sm">
+                                            <tbody>
+                                                <tr className="border-b"><td className="py-2 font-medium">W/m²</td><td className="py-2 text-right highlight">{report.hv.heatFluxDensity.toFixed(2)} W/m²</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">ΔT₂</td><td className="py-2 text-right highlight">{report.hv.deltaT2.toFixed(2)} °C</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">I₁</td><td className="py-2 text-right highlight">{report.hv.i1.toFixed(2)}</td></tr>
+                                                <tr className="border-b"><td className="py-2 font-medium">I₂</td><td className="py-2 text-right highlight">{report.hv.i2.toFixed(2)}</td></tr>
+                                                <tr className="bg-yellow-50"><td className="py-2 font-bold">θ grad (HV)</td><td className="py-2 text-right font-bold text-lg highlight">{report.hv.thetaGrad.toFixed(2)} °C</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Section 3: Temperature Rise Calculations */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-4 text-blue-600">
+                                    3. TEMPERATURE RISE CALCULATIONS
+                                </h3>
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Guaranteed Top Oil rise</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.guaranteedTopOilRise.toFixed(2)} °C</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Guaranteed Average winding rise</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.guaranteedAvgWindingRise.toFixed(2)} °C</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Designed Top oil Rise</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.designedTopOilRise.toFixed(2)} °C</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Average oil Rise</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.inputs.designedTopOilRise.toFixed(2)} × 0.9</div>
+                                                <div className="value">{report.avgOilRise.toFixed(2)} °C</div>
+                                            </td>
+                                        </tr>
+                                        
+                                        <tr className="border-t pt-2 mt-2"><td colSpan="3" className="pt-4"></td></tr>
+                                        
+                                        <tr>
+                                            <td className="label">Average winding Temperature rise (HV)</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.avgOilRise.toFixed(2)} + {report.hv.thetaGrad.toFixed(2)}</div>
+                                                <div className={`value ${report.checkAvgWindingRiseHV ? 'result-ok' : 'result-fail'}`}>
+                                                    {report.avgWindingTempRiseHV.toFixed(2)} °C 
+                                                    (Limit: {report.inputs.guaranteedAvgWindingRise.toFixed(2)} °C) 
+                                                    {report.checkAvgWindingRiseHV ? ' ✓' : ' ✗'}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        
+                                        <tr className="pt-2 mt-2"><td colSpan="3" className="pt-4"></td></tr>
+
+                                        <tr>
+                                            <td className="label">Average winding Temperature rise (IV)</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.avgOilRise.toFixed(2)} + {report.iv.thetaGrad.toFixed(2)}</div>
+                                                <div className={`value ${report.checkAvgWindingRiseIV ? 'result-ok' : 'result-fail'}`}>
+                                                    {report.avgWindingTempRiseIV.toFixed(2)} °C 
+                                                    (Limit: {report.inputs.guaranteedAvgWindingRise.toFixed(2)} °C) 
+                                                    {report.checkAvgWindingRiseIV ? ' ✓' : ' ✗'}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Section 4: Hot Spot Temperature Calculations */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-4 text-blue-600">
+                                    4. HOT SPOT TEMPERATURE CALCULATIONS
+                                </h3>
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Hot Spot Temperature rise of HV winding</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">({report.inputs.designedTopOilRise.toFixed(2)} × 1.054) + ({report.inputs.hotSpotFactorHV.toFixed(2)} × {report.hv.thetaGrad.toFixed(2)})</div>
+                                                <div className={`value ${report.checkHotSpotRiseHV ? 'result-ok' : 'result-fail'}`}>
+                                                    {report.hotSpotTempRiseHV.toFixed(2)} °C (Limit: 88 °C) {report.checkHotSpotRiseHV ? ' ✓' : ' ✗'}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">@ {report.inputs.weightedAmbient}°C Weighted ambient (HV)</td>
+                                            <td className="equals">=</td>
+                                            <td className={`value ${report.checkHotSpotAbsoluteHV ? 'result-ok' : 'result-fail'}`} style={{fontSize: '1.1em'}}>
+                                                {report.hotSpotAbsoluteTempHV.toFixed(2)} °C (Limit: 98 °C) {report.checkHotSpotAbsoluteHV ? ' ✓' : ' ✗'}
+                                            </td>
+                                        </tr>
+                                        
+                                        <tr className="pt-2 mt-2"><td colSpan="3" className="pt-4"></td></tr>
+                                        
+                                        <tr>
+                                            <td className="label">Hot Spot Temperature rise of IV winding</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">({report.inputs.designedTopOilRise.toFixed(2)} × 1.054) + ({report.inputs.hotSpotFactorIV.toFixed(2)} × {report.iv.thetaGrad.toFixed(2)})</div>
+                                                <div className={`value ${report.checkHotSpotRiseIV ? 'result-ok' : 'result-fail'}`}>
+                                                    {report.hotSpotTempRiseIV.toFixed(2)} °C (Limit: 88 °C) {report.checkHotSpotRiseIV ? ' ✓' : ' ✗'}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">@ {report.inputs.weightedAmbient}°C Weighted ambient (IV)</td>
+                                            <td className="equals">=</td>
+                                            <td className={`value ${report.checkHotSpotAbsoluteIV ? 'result-ok' : 'result-fail'}`} style={{fontSize: '1.1em'}}>
+                                                {report.hotSpotAbsoluteTempIV.toFixed(2)} °C (Limit: 98 °C) {report.checkHotSpotAbsoluteIV ? ' ✓' : ' ✗'}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

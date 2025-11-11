@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mahati | Transformer Calculations</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background: #1a1f2e;
+            color: #e2e8f0;
+        }
+
+        .page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1rem 3rem;
+        }
+
+        .wrapper {
+            width: min(1100px, 100%);
+            background: #ffffff;
+            border-radius: 14px;
+            padding: 2.5rem 2rem 3rem;
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.3);
+        }
+
+        .logo {
+            display: block;
+            margin: 0 auto 1.5rem;
+            height: 80px;
+            width: 200px;
+            object-fit: contain;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: clamp(1.75rem, 3vw, 2.4rem);
+            margin-bottom: 0.5rem;
+            letter-spacing: 0.01em;
+            color: #1f2933;
+        }
+
+        p.tagline {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #52606d;
+            font-size: 0.95rem;
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        /* Responsive: 2 columns on tablets, 1 column on mobile */
+        @media (max-width: 900px) {
+            .button-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .button-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        button.calc-btn {
+            appearance: none;
+            display: block;
+            width: 100%;
+            border: 1px solid #d4d9e1;
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            background: #f8fafc;
+            color: #1f2933;
+            text-align: left;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        }
+
+        button.calc-btn:hover {
+            transform: translateY(-2px);
+            border-color: #9aa5b1;
+            box-shadow: 0 10px 20px rgba(100, 116, 139, 0.15);
+            background: #ffffff;
+        }
+
+        footer {
+            margin-top: 2.5rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #7b8794;
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <section class="wrapper">
+            <img
+                src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                alt="Mahati Logo"
+                class="logo"
+            />
+
+            <h1>Transformer Calculation Suite</h1>
+            <p class="tagline">Select a topic to open its calculator</p>
+
+            <div class="button-grid">
+                <button class="calc-btn" onclick="window.location.href='prv cacl.html'">
+                    PRV
+                </button>
+                <button class="calc-btn" onclick="window.location.href='Short Circuit Calculation Thermal (Normal tap).html'">
+                    Short Circuit Calculation Thermal (Normal Tap)
+                </button>
+                <button class="calc-btn" onclick="window.location.href='Short circuit calculation dynamic (at negative tap).html'">
+                    Short Circuit Calculation Dynamic (Negative Tap)
+                </button>
+                <button class="calc-btn" onclick="window.location.href='No load losses.html'">
+                    No Load Loss and Loss Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='impedance calc.html'">
+                    Impedance Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='Current Density Calculation.html'">
+                    Current Density Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='core hotspot temp calculation.html'">
+                    Core Hotspot Temperature Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='inrush current calc.html'">
+                    Inrush Current Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='regulation calc.html'">
+                    Regulation Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='hotspot temp rise calc.html'">
+                    Winding Hotspot Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='Losses copper weight calc.html'">
+                    Losses Copper Weight Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='No load current calc.html'">
+                    No Load Current Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='Eddy and Stray loss calc.html'">
+                    Eddy and Stray Loss Calculation
+                </button>
+                <button class="calc-btn" onclick="window.location.href='short circuit calculator thermal.html'">
+                    Short Circuit Calculation Thermal (Negative Tap)
+                </button>
+                                <button class="calc-btn" onclick="window.location.href='cooling calc.html'">
+                    Cooling Calculation
+                </button>
+                                <button class="calc-btn" onclick="window.location.href='short circuit calc dynamic(at normal tap).html'">
+                    Short Circuit Calculation Dynamic (Negative Tap)
+                </button>
+            </div>
+
+            <footer>
+                © <span id="year"></span> Mahati • Transformer Engineering Tools
+            </footer>
+        </section>
+    </main>
+
+    <script>
+        document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+</body>
+</html>

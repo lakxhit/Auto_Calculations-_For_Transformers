@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>No Load & Load Loss Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        .formula-box { background-color: #f0f9ff; padding: 12px; border-left: 4px solid #3b82f6; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 0.875rem; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            const inputFieldsMetadata = {
+                // Core Parameters
+                coreDiameter: { label: "Core Diameter", unit: "cm", section: "core", index: 1 },
+                windowHeight: { label: "Window Height", unit: "cm", section: "core", index: 2 },
+                coreLength: { label: "Core Length", unit: "cm", section: "core", index: 3 },
+                coreArea: { label: "Core Area", unit: "sq.cm", section: "core", index: 4 },
+                coreDensity: { label: "Core Density", unit: "g/cm³", section: "core", index: 5, default: "7.650" },
+                wattsPerKg: { label: "Specific Core Loss (Watts/kg)", unit: "W/kg", section: "core", index: 6 },
+                buildingFactor: { label: "Building Factor", unit: "", section: "core", index: 7 },
+                guaranteedNoLoadLoss: { label: "Guaranteed Max No Load Loss", unit: "kW", section: "core", index: 8 },
+                
+                // Load Loss Parameters
+                resistanceHV: { label: "Resistance of HV Winding", unit: "Ω/phase", section: "load", index: 9 },
+                resistanceIV: { label: "Resistance of IV Winding", unit: "Ω/phase", section: "load", index: 10 },
+                phaseCurrentHV: { label: "Phase Current of HV Winding", unit: "A", section: "load", index: 11 },
+                phaseCurrentIV: { label: "Phase Current of IV Winding", unit: "A", section: "load", index: 12 },
+                eddyStrayLoss: { label: "Eddy + Stray Loss", unit: "kW", section: "load", index: 13 },
+                coolerLoss: { label: "Cooler Loss", unit: "kW", section: "load", index: 14 },
+                guaranteedLoadLoss: { label: "Guaranteed Max Load Loss (including Cooler Loss)", unit: "kW", section: "load", index: 15 },
+            };
+
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+                    const meta = inputFieldsMetadata[name];
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (meta.integer) {
+                        if (!Number.isInteger(parseFloat(trimmedValue)) || numValue < 1) {
+                            errorMessage = 'Please enter a positive integer.';
+                        }
+                    } else if (isNaN(numValue) || numValue <= 0) {
+                        errorMessage = 'Please enter a valid positive number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    const meta = inputFieldsMetadata[key];
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (meta.integer && (!Number.isInteger(numValue) || numValue < 1)) {
+                        newErrors[key] = 'Please enter a positive integer.';
+                        isValid = false;
+                    } else if (!meta.integer && (isNaN(numValue) || numValue <= 0)) {
+                        newErrors[key] = 'Please enter a valid positive number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateLosses = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                // Parse all inputs
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const {
+                    coreDiameter, windowHeight, coreLength, coreArea, coreDensity,
+                    wattsPerKg, buildingFactor, guaranteedNoLoadLoss,
+                    resistanceHV, resistanceIV, phaseCurrentHV, phaseCurrentIV,
+                    eddyStrayLoss, coolerLoss, guaranteedLoadLoss
+                } = inputs;
+
+                const results = {};
+
+                // 1. CORE WEIGHT CALCULATION
+                // Formula: Core Weight = (2 × Window Height + Core Length) × Core Area × Core Density × 0.001
+                results.coreWeight = (2 * windowHeight + coreLength) * coreArea * coreDensity * 0.001;
+
+                // 2. NO LOAD LOSS CALCULATION
+                // Formula: No Load Loss (Watts) = Watts/kg × Building Factor × Core Weight
+                results.noLoadLoss_watts = wattsPerKg * buildingFactor * results.coreWeight;
+                results.noLoadLoss_kW = results.noLoadLoss_watts / 1000;
+
+                // Check against guaranteed value
+                results.noLoadLossCheck = results.noLoadLoss_kW <= guaranteedNoLoadLoss;
+
+                // 3. LOAD LOSS CALCULATION AT NORMAL TAP
+                // I²R Loss for HV winding
+                results.i2rLossHV_watts = Math.pow(phaseCurrentHV, 2) * resistanceHV;
+                
+                // I²R Loss for IV winding
+                results.i2rLossIV_watts = Math.pow(phaseCurrentIV, 2) * resistanceIV;
+
+                // Total I²R Loss = I²R_HV + I²R_IV
+                results.totalI2RLoss_watts = results.i2rLossHV_watts + results.i2rLossIV_watts;
+                results.totalI2RLoss_kW = results.totalI2RLoss_watts / 1000;
+
+                // Total Load Loss = Total I²R Loss + Eddy/Stray Loss
+                results.totalLoadLoss_kW = results.totalI2RLoss_kW + eddyStrayLoss;
+
+                // Load Loss + Cooler Loss
+                results.totalLoadLossWithCooler_kW = results.totalLoadLoss_kW + coolerLoss;
+
+                // Check against guaranteed value
+                results.loadLossCheck = results.totalLoadLossWithCooler_kW <= guaranteedLoadLoss;
+
+                setReport({ ...results, inputs });
+            };
+
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step={meta.integer ? "1" : "any"}
+                                    min={meta.integer ? "1" : "0"}
+                                    placeholder={`Enter ${meta.label}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center text-xs">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium text-xs">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-xs"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            const renderSection = (title, fieldNames) => (
+                <div className="mb-6">
+                    <h3 className="text-md font-bold mb-3 text-gray-700 bg-gray-100 p-2 rounded">{title}</h3>
+                    <table className="w-full border-collapse border border-gray-300 text-sm">
+                        <thead>
+                            <tr className="bg-blue-100">
+                                <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                <th className="border border-gray-300 p-3">Description</th>
+                                <th className="border border-gray-300 p-3">Enter Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {fieldNames.map(name => renderInputRow(name))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            No Load & Load Loss Calculator
+                        </h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Loss Calculations
+                        </h2>
+                        
+                        {renderSection("Core Parameters & No Load Loss", 
+                            ['coreDiameter', 'windowHeight', 'coreLength', 'coreArea', 'coreDensity', 
+                             'wattsPerKg', 'buildingFactor', 'guaranteedNoLoadLoss'])}
+                        
+                        {renderSection("Load Loss Parameters (at Normal Tap)", 
+                            ['resistanceHV', 'resistanceIV', 'phaseCurrentHV', 'phaseCurrentIV', 
+                             'eddyStrayLoss', 'coolerLoss', 'guaranteedLoadLoss'])}
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                               Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateLosses}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">
+                                    NO LOAD & LOAD LOSS CALCULATION REPORT
+                                </h2>
+                            </div>
+
+                            {/* Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <h4 className="text-md font-semibold mb-2 text-gray-700">Core Parameters</h4>
+                                        <table className="w-full text-xs border-collapse">
+                                            <tbody>
+                                                {['coreDiameter', 'windowHeight', 'coreLength', 'coreArea', 'coreDensity', 
+                                                  'wattsPerKg', 'buildingFactor', 'guaranteedNoLoadLoss'].map(name => renderReportInputRow(name))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-md font-semibold mb-2 text-gray-700">Load Loss Parameters</h4>
+                                        <table className="w-full text-xs border-collapse">
+                                            <tbody>
+                                                {['resistanceHV', 'resistanceIV', 'phaseCurrentHV', 'phaseCurrentIV', 
+                                                  'eddyStrayLoss', 'coolerLoss', 'guaranteedLoadLoss'].map(name => renderReportInputRow(name))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* No Load Loss Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. No Load Loss Calculation</h3>
+                                
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-700">Step 1: Core Weight Calculation</h4>
+                                    <div className="formula-box">
+                                        Core Weight = (2 × Window Height + Core Length) × Core Area × Core Density × 0.001
+                                    </div>
+                                    <div className="formula-box bg-green-50 border-green-500">
+                                        = (2 × {report.inputs.windowHeight} + {report.inputs.coreLength}) × {report.inputs.coreArea} × {report.inputs.coreDensity} × 0.001
+                                        <br/>
+                                        = <span className="font-bold text-green-700">{report.coreWeight.toFixed(2)} kg</span>
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-700">Step 2: No Load Loss Calculation</h4>
+                                    <div className="formula-box">
+                                        No Load Loss (Watts) = Watts/kg × Building Factor × Core Weight
+                                    </div>
+                                    <div className="formula-box bg-green-50 border-green-500">
+                                        = {report.inputs.wattsPerKg} × {report.inputs.buildingFactor} × {report.coreWeight.toFixed(2)}
+                                        <br/>
+                                        = {report.noLoadLoss_watts.toFixed(2)} Watts = <span className="font-bold text-green-700">{report.noLoadLoss_kW.toFixed(2)} kW</span>
+                                    </div>
+                                </div>
+
+                                <table className="w-full text-sm bg-blue-50 rounded">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium w-3/5 px-3">Calculated Core Weight:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.coreWeight.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium px-3">Calculated No Load Loss:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.noLoadLoss_kW.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium px-3">Guaranteed Max No Load Loss:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.inputs.guaranteedNoLoadLoss.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr className="border-t-2 border-blue-200">
+                                            <td className="py-2 pr-2 font-bold px-3">No Load Loss Check:</td>
+                                            <td className="py-2 px-3">
+                                                {report.noLoadLossCheck 
+                                                    ? <span className="result-ok">Parameter surpassed (Calculated ≤ Guaranteed)</span>
+                                                    : <span className="result-fail">Parameter not surpassed (Calculated &gt; Guaranteed)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Load Loss Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. Load Loss Calculation (at Normal Tap)</h3>
+                                
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-700">Step 1: I²R Loss Calculation</h4>
+                                    
+                                    <div className="mb-3">
+                                        <p className="text-sm font-medium mb-1">HV Winding I²R Loss:</p>
+                                        <div className="formula-box text-xs">
+                                            I²R Loss (HV) = I_HV² × R_HV = {report.inputs.phaseCurrentHV}² × {report.inputs.resistanceHV}
+                                            <br/>
+                                            = <span className="font-bold text-green-700">{report.i2rLossHV_watts.toFixed(2)} Watts</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-3">
+                                        <p className="text-sm font-medium mb-1">IV Winding I²R Loss:</p>
+                                        <div className="formula-box text-xs">
+                                            I²R Loss (IV) = I_IV² × R_IV = {report.inputs.phaseCurrentIV}² × {report.inputs.resistanceIV}
+                                            <br/>
+                                            = <span className="font-bold text-green-700">{report.i2rLossIV_watts.toFixed(2)} Watts</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="formula-box bg-yellow-50 border-yellow-500">
+                                        <strong>Total I²R Loss</strong> = I²R Loss (HV) + I²R Loss (IV)
+                                        <br/>
+                                        = {report.i2rLossHV_watts.toFixed(2)} + {report.i2rLossIV_watts.toFixed(2)}
+                                        <br/>
+                                        = {report.totalI2RLoss_watts.toFixed(2)} Watts = <span className="font-bold text-yellow-700">{report.totalI2RLoss_kW.toFixed(2)} kW</span>
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-700">Step 2: Total Load Loss</h4>
+                                    <div className="formula-box">
+                                        Total Load Loss = Total I²R Loss + Eddy/Stray Loss
+                                    </div>
+                                    <div className="formula-box bg-green-50 border-green-500">
+                                        = {report.totalI2RLoss_kW.toFixed(2)} + {report.inputs.eddyStrayLoss}
+                                        <br/>
+                                        = <span className="font-bold text-green-700">{report.totalLoadLoss_kW.toFixed(2)} kW</span>
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-700">Step 3: Load Loss + Cooler Loss</h4>
+                                    <div className="formula-box">
+                                        Final Load Loss = Total Load Loss + Cooler Loss
+                                    </div>
+                                    <div className="formula-box bg-green-50 border-green-500">
+                                        = {report.totalLoadLoss_kW.toFixed(2)} + {report.inputs.coolerLoss}
+                                        <br/>
+                                        = <span className="font-bold text-green-700">{report.totalLoadLossWithCooler_kW.toFixed(2)} kW</span>
+                                    </div>
+                                </div>
+
+                                <table className="w-full text-sm bg-blue-50 rounded">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium w-3/5 px-3">Total I²R Loss (HV + IV):</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.totalI2RLoss_kW.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium px-3">Eddy + Stray Loss:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.inputs.eddyStrayLoss.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr className="bg-blue-100">
+                                            <td className="py-2 pr-2 font-bold px-3">Total Load Loss (without Cooler):</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.totalLoadLoss_kW.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium px-3">Cooler Loss:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.inputs.coolerLoss.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr className="bg-blue-200">
+                                            <td className="py-2 pr-2 font-bold px-3">Final Load Loss (incl. Cooler):</td>
+                                            <td className="py-2 px-3"><span className="highlight text-lg">{report.totalLoadLossWithCooler_kW.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 pr-2 font-medium px-3">Guaranteed Max Load Loss:</td>
+                                            <td className="py-2 px-3"><span className="highlight">{report.inputs.guaranteedLoadLoss.toFixed(2)} kW</span></td>
+                                        </tr>
+                                        <tr className="border-t-2 border-blue-300">
+                                            <td className="py-2 pr-2 font-bold px-3">Load Loss Check:</td>
+                                            <td className="py-2 px-3">
+                                                {report.loadLossCheck 
+                                                    ? <span className="result-ok">Parameter surpassed (Calculated ≤ Guaranteed)</span>
+                                                    : <span className="result-fail">Parameter not surpassed (Calculated &gt; Guaranteed)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Summary */}
+                            <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg mt-6 border-2 border-blue-300">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-700">Overall Compliance Summary</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                    <div className="flex items-center">
+                                        <span className="mr-2">{report.noLoadLossCheck ? '✅' : '❌'}</span>
+                                        <span className="font-medium">No Load Loss: </span>
+                                        <span className={`ml-2 font-bold ${report.noLoadLossCheck ? 'text-green-600' : 'text-red-600'}`}>
+                                            {report.noLoadLossCheck ? 'Parameter surpassed' : 'Parameter not surpassed'}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center">
+                                        <span className="mr-2">{report.loadLossCheck ? '✅' : '❌'}</span>
+                                        <span className="font-medium">Load Loss: </span>
+                                        <span className={`ml-2 font-bold ${report.loadLossCheck ? 'text-green-600' : 'text-red-600'}`}>
+                                            {report.loadLossCheck ? 'Parameter surpassed' : 'Parameter not surpassed'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="mt-4 p-3 bg-white rounded border border-blue-200">
+                                    <p className="text-xs text-gray-600 italic">
+                                        <strong>Note:</strong> All guaranteed parameters are based on the main pair of windings as per transformer specifications.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

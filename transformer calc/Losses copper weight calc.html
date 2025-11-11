@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Load Loss Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+        }
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .calc-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        .calc-table td { padding: 8px 12px; vertical-align: top; }
+        .calc-table .label { width: 60%; font-weight: 500; }
+        .calc-table .equals { width: 5%; text-align: center; }
+        .calc-table .value { width: 35%; font-weight: bold; }
+        .section-divider { border-top: 2px solid #333; margin: 20px 0; }
+        .formula-text { font-family: 'Courier New', monospace; font-size: 0.9em; color: #444; margin: 5px 0; }
+        .multi-column-input { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Section A: Winding Parameters for TER, IV, and HV
+            const windingParams = {
+                ter: {
+                    phaseCurrent: { label: "Phase Current (Amps) (I)", unit: "Amps" },
+                    windingVoltage: { label: "Winding of operation", unit: "kV" },
+                    conductorThickness: { label: "Thickness of conductor", unit: "mm" },
+                    conductorsParallel: { label: "No. of conductors in parallel", unit: "" },
+                    windingGroupsParallel: { label: "No. of winding groups in parallel", unit: "" },
+                    conductorSize: { label: "Size of conductor", unit: "mm²" },
+                    idCoil: { label: "ID of coil", unit: "mm" },
+                    odCoil: { label: "OD of coil", unit: "mm" },
+                    numberOfTurns: { label: "Number of turns", unit: "" },
+                    lengthMeanTurn: { label: "Length of Mean turn (Lmt)", unit: "meter" },
+                    totalLengthConductor: { label: "Total length of conductor(L)/Phase", unit: "meter" },
+                    densityCopper: { label: "Density of copper (ρ)", unit: "g/mm³" },
+                },
+                iv: {
+                    phaseCurrent: { label: "Phase Current (Amps) (I)", unit: "Amps" },
+                    windingVoltage: { label: "Winding of operation", unit: "kV" },
+                    conductorThickness: { label: "Thickness of conductor", unit: "mm" },
+                    conductorsParallel: { label: "No. of conductors in parallel", unit: "" },
+                    windingGroupsParallel: { label: "No. of winding groups in parallel", unit: "" },
+                    conductorSize: { label: "Size of conductor", unit: "mm²" },
+                    idCoil: { label: "ID of coil", unit: "mm" },
+                    odCoil: { label: "OD of coil", unit: "mm" },
+                    numberOfTurns: { label: "Number of turns", unit: "" },
+                    lengthMeanTurn: { label: "Length of Mean turn (Lmt)", unit: "meter" },
+                    totalLengthConductor: { label: "Total length of conductor(L)/Phase", unit: "meter" },
+                    densityCopper: { label: "Density of copper (ρ)", unit: "g/mm³" },
+                },
+                hv: {
+                    phaseCurrent: { label: "Phase Current (Amps) (I)", unit: "Amps" },
+                    windingVoltage: { label: "Winding of operation", unit: "kV" },
+                    conductorThickness: { label: "Thickness of conductor", unit: "mm" },
+                    conductorsParallel: { label: "No. of conductors in parallel", unit: "" },
+                    windingGroupsParallel: { label: "No. of winding groups in parallel", unit: "" },
+                    conductorSize: { label: "Size of conductor", unit: "mm²" },
+                    idCoil: { label: "ID of coil", unit: "mm" },
+                    odCoil: { label: "OD of coil", unit: "mm" },
+                    numberOfTurns: { label: "Number of turns", unit: "" },
+                    lengthMeanTurn: { label: "Length of Mean turn (Lmt)", unit: "meter" },
+                    totalLengthConductor: { label: "Total length of conductor(L)/Phase", unit: "meter" },
+                    densityCopper: { label: "Density of copper (ρ)", unit: "g/mm³" },
+                }
+            };
+
+            // Section B: Auxiliary Loss Parameters
+            const auxiliaryParams = {
+                noOfFansONAN: { label: "No. of fans in operation for ONAN cooling", unit: "Nos" },
+                ratingEachFan: { label: "Rating of each fan", unit: "kW" },
+                noOfPumpsOFAF: { label: "No. of pumps in operation for OFAF cooling", unit: "Nos" },
+                ratingEachPump: { label: "Rating of each pump", unit: "kW" },
+            };
+
+            const [formData, setFormData] = React.useState({
+                // TER winding
+                ter_phaseCurrent: '',
+                ter_windingVoltage: '',
+                ter_conductorThickness: '',
+                ter_conductorsParallel: '',
+                ter_windingGroupsParallel: '',
+                ter_conductorSize: '',
+                ter_idCoil: '',
+                ter_odCoil: '',
+                ter_numberOfTurns: '',
+                ter_lengthMeanTurn: '',
+                ter_totalLengthConductor: '',
+                ter_densityCopper: '8.89',
+                
+                // IV winding
+                iv_phaseCurrent: '',
+                iv_windingVoltage: '',
+                iv_conductorThickness: '',
+                iv_conductorsParallel: '',
+                iv_windingGroupsParallel: '',
+                iv_conductorSize: '',
+                iv_idCoil: '',
+                iv_odCoil: '',
+                iv_numberOfTurns: '',
+                iv_lengthMeanTurn: '',
+                iv_totalLengthConductor: '',
+                iv_densityCopper: '8.89',
+                
+                // HV winding
+                hv_phaseCurrent: '',
+                hv_windingVoltage: '',
+                hv_conductorThickness: '',
+                hv_conductorsParallel: '',
+                hv_windingGroupsParallel: '',
+                hv_conductorSize: '',
+                hv_idCoil: '',
+                hv_odCoil: '',
+                hv_numberOfTurns: '',
+                hv_lengthMeanTurn: '',
+                hv_totalLengthConductor: '',
+                hv_densityCopper: '8.89',
+                
+                // Common parameters
+                eddyStrayLosses: '',
+                guaranteedLoadLoss: '',
+                
+                // Auxiliary parameters
+                noOfFansONAN: '',
+                ratingEachFan: '',
+                noOfPumpsOFAF: '',
+                ratingEachPump: '',
+                guaranteedAuxiliaryLosses: '',
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (isNaN(numValue) || numValue <= 0) {
+                        errorMessage = 'Please enter a valid positive number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else {
+                        const numValue = parseFloat(value);
+                        if (isNaN(numValue) || numValue <= 0) {
+                            newErrors[key] = 'Please enter a valid positive number.';
+                            isValid = false;
+                        }
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateLoadLosses = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const results = {
+                    ter: {},
+                    iv: {},
+                    hv: {},
+                    auxiliary: {}
+                };
+
+                // Calculate for each winding (TER, IV, HV)
+                ['ter', 'iv', 'hv'].forEach(winding => {
+                    const w = results[winding];
+                    
+                    // Current density (Amps/mm²)
+                    w.currentDensity = inputs[`${winding}_phaseCurrent`] / 
+                                      (inputs[`${winding}_conductorSize`] * inputs[`${winding}_conductorsParallel`]);
+                    
+                    // Mean diameter of coil
+                    w.meanDiameter = (inputs[`${winding}_idCoil`] + inputs[`${winding}_odCoil`]) / 2;
+                    
+                    // Copper loss at 75°C (W/m for single conductor)
+                    // Using formula: Loss = I² × ρ × (1 + α × (75-20)) / A
+                    // For copper: ρ at 20°C = 0.0172 ohm·mm²/m, α = 0.00393
+                    const rho_20 = 0.0172; // ohm·mm²/m
+                    const alpha = 0.00393;
+                    const rho_75 = rho_20 * (1 + alpha * (75 - 20));
+                    
+                    const currentPerConductor = inputs[`${winding}_phaseCurrent`] / inputs[`${winding}_conductorsParallel`];
+                    const resistance75 = (rho_75 * inputs[`${winding}_totalLengthConductor`]) / inputs[`${winding}_conductorSize`];
+                    
+                    w.resistance75 = resistance75;
+                    w.copperLoss75 = Math.pow(inputs[`${winding}_phaseCurrent`], 2) * resistance75;
+                    
+                    // Bare copper weight (kg)
+                    w.bareCooperWeight = inputs[`${winding}_totalLengthConductor`] * 
+                                        inputs[`${winding}_conductorSize`] * 
+                                        inputs[`${winding}_conductorsParallel`] *
+                                        inputs[`${winding}_densityCopper`] / 1000; // Convert from g to kg
+                });
+
+                // Total I²R losses per phase
+                results.totalI2RLosses = results.ter.copperLoss75 + results.iv.copperLoss75 + results.hv.copperLoss75;
+                
+                // Total Load Loss at 75°C
+                results.totalLoadLoss75 = results.totalI2RLosses + inputs.eddyStrayLosses;
+                
+                // Total bare copper weight
+                results.totalBareCooperWeight = results.ter.bareCooperWeight + results.iv.bareCooperWeight + results.hv.bareCooperWeight;
+
+                // Section B: Auxiliary Losses
+                results.auxiliary.totalFanLosses = inputs.noOfFansONAN * inputs.ratingEachFan;
+                results.auxiliary.totalPumpLosses = inputs.noOfPumpsOFAF * inputs.ratingEachPump;
+                results.auxiliary.totalCombinedLosses = results.auxiliary.totalFanLosses + results.auxiliary.totalPumpLosses;
+
+                setReport({ ...results, inputs });
+            };
+
+            const renderWindingInputSection = (windingType, label) => {
+                const params = windingParams[windingType];
+                return (
+                    <div key={windingType} className="mb-6">
+                        <h3 className="text-lg font-bold mb-3 text-blue-700 bg-blue-50 p-2 rounded">{label}</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {Object.entries(params).map(([key, meta]) => {
+                                const fieldName = `${windingType}_${key}`;
+                                return (
+                                    <div key={fieldName} className="border border-gray-300 p-3 rounded">
+                                        <label className="block font-semibold mb-2">
+                                            {meta.label} <span className="text-red-600">*</span>
+                                        </label>
+                                        <div className="flex items-center">
+                                            <input
+                                                type="number"
+                                                name={fieldName}
+                                                value={formData[fieldName]}
+                                                onChange={handleInputChange}
+                                                className={`flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[fieldName] ? 'input-error' : ''}`}
+                                                step="any"
+                                                placeholder={`Enter ${meta.label}`}
+                                                aria-label={meta.label}
+                                            />
+                                            {meta.unit && <span className="ml-2 whitespace-nowrap text-sm">{meta.unit}</span>}
+                                        </div>
+                                        {errors[fieldName] && <div className="error-message">{errors[fieldName]}</div>}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="container mx-auto p-4 max-w-7xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Transformer Load Loss & Copper Weight Calculator
+                        </h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            SECTION A: CALCULATION OF LOAD LOSSES (NORMAL TAP) & COPPER WEIGHT CALCULATION
+                        </h2>
+                        
+                        {renderWindingInputSection('ter', 'TER Winding Parameters')}
+                        {renderWindingInputSection('iv', 'IV Winding Parameters')}
+                        {renderWindingInputSection('hv', 'HV Winding Parameters')}
+
+                        <div className="border-t-2 border-gray-300 mt-6 pt-6">
+                            <h3 className="text-lg font-bold mb-3 text-blue-700 bg-blue-50 p-2 rounded">Additional Load Loss Parameters</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="border border-gray-300 p-3 rounded">
+                                    <label className="block font-semibold mb-2">
+                                        Eddy & Stray Losses <span className="text-red-600">*</span>
+                                    </label>
+                                    <div className="flex items-center">
+                                        <input
+                                            type="number"
+                                            name="eddyStrayLosses"
+                                            value={formData.eddyStrayLosses}
+                                            onChange={handleInputChange}
+                                            className={`flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.eddyStrayLosses ? 'input-error' : ''}`}
+                                            step="any"
+                                            placeholder="Enter Eddy & Stray Losses"
+                                        />
+                                        <span className="ml-2 whitespace-nowrap text-sm">kW</span>
+                                    </div>
+                                    {errors.eddyStrayLosses && <div className="error-message">{errors.eddyStrayLosses}</div>}
+                                </div>
+                                
+                                <div className="border border-gray-300 p-3 rounded">
+                                    <label className="block font-semibold mb-2">
+                                        Guaranteed Load Loss <span className="text-red-600">*</span>
+                                    </label>
+                                    <div className="flex items-center">
+                                        <input
+                                            type="number"
+                                            name="guaranteedLoadLoss"
+                                            value={formData.guaranteedLoadLoss}
+                                            onChange={handleInputChange}
+                                            className={`flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.guaranteedLoadLoss ? 'input-error' : ''}`}
+                                            step="any"
+                                            placeholder="Enter Guaranteed Load Loss"
+                                        />
+                                        <span className="ml-2 whitespace-nowrap text-sm">kW</span>
+                                    </div>
+                                    {errors.guaranteedLoadLoss && <div className="error-message">{errors.guaranteedLoadLoss}</div>}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="border-t-2 border-gray-300 mt-6 pt-6">
+                            <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                                SECTION B: CALCULATION OF AUXILIARY LOSS
+                            </h2>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {Object.entries(auxiliaryParams).map(([key, meta]) => (
+                                    <div key={key} className="border border-gray-300 p-3 rounded">
+                                        <label className="block font-semibold mb-2">
+                                            {meta.label} <span className="text-red-600">*</span>
+                                        </label>
+                                        <div className="flex items-center">
+                                            <input
+                                                type="number"
+                                                name={key}
+                                                value={formData[key]}
+                                                onChange={handleInputChange}
+                                                className={`flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[key] ? 'input-error' : ''}`}
+                                                step="any"
+                                                placeholder={`Enter ${meta.label}`}
+                                            />
+                                            {meta.unit && <span className="ml-2 whitespace-nowrap text-sm">{meta.unit}</span>}
+                                        </div>
+                                        {errors[key] && <div className="error-message">{errors[key]}</div>}
+                                    </div>
+                                ))}
+                                
+                                <div className="border border-gray-300 p-3 rounded">
+                                    <label className="block font-semibold mb-2">
+                                        Total Guaranteed Auxiliary Losses <span className="text-red-600">*</span>
+                                    </label>
+                                    <div className="flex items-center">
+                                        <input
+                                            type="number"
+                                            name="guaranteedAuxiliaryLosses"
+                                            value={formData.guaranteedAuxiliaryLosses}
+                                            onChange={handleInputChange}
+                                            className={`flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.guaranteedAuxiliaryLosses ? 'input-error' : ''}`}
+                                            step="any"
+                                            placeholder="Enter Guaranteed Auxiliary Losses"
+                                        />
+                                        <span className="ml-2 whitespace-nowrap text-sm">kW</span>
+                                    </div>
+                                    {errors.guaranteedAuxiliaryLosses && <div className="error-message">{errors.guaranteedAuxiliaryLosses}</div>}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                               Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateLoadLosses}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-2 text-center">
+                                    TRANSFORMER LOAD LOSS & COPPER WEIGHT CALCULATION REPORT
+                                </h2>
+                            </div>
+
+                            {/* Section A Report */}
+                            <div className="mb-8">
+                                <h3 className="text-lg font-bold mb-4 bg-blue-100 p-2">
+                                    A) CALCULATION OF LOAD LOSSES (NORMAL TAP) & COPPER WEIGHT CALCULATION
+                                </h3>
+                                
+                                {['ter', 'iv', 'hv'].map((winding) => {
+                                    const windingLabel = winding.toUpperCase();
+                                    const w = report[winding];
+                                    return (
+                                        <div key={winding} className="mb-6 border border-gray-300 p-4 rounded">
+                                            <h4 className="font-bold text-md mb-3 text-blue-700">{windingLabel} Winding:</h4>
+                                            <table className="calc-table">
+                                                <tbody>
+                                                    <tr>
+                                                        <td className="label">Phase Current (I)</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_phaseCurrent`]} Amps</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Winding Voltage</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_windingVoltage`]} kV</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Thickness of conductor</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_conductorThickness`]} mm</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">No. of conductors in parallel</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_conductorsParallel`]}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Size of conductor</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_conductorSize`]} mm²</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Current density (Amps/mm²)</td>
+                                                        <td className="equals">=</td>
+                                                        <td>
+                                                            <div className="formula-text">I / (Size × No. of conductors)</div>
+                                                            <div className="formula-text">= {report.inputs[`${winding}_phaseCurrent`]} / ({report.inputs[`${winding}_conductorSize`]} × {report.inputs[`${winding}_conductorsParallel`]})</div>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{w.currentDensity.toFixed(3)} A/mm²</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">ID of coil</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_idCoil`]} mm</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">OD of coil</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_odCoil`]} mm</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Mean diameter of coil</td>
+                                                        <td className="equals">=</td>
+                                                        <td>
+                                                            <div className="formula-text">(ID + OD) / 2</div>
+                                                            <div className="formula-text">= ({report.inputs[`${winding}_idCoil`]} + {report.inputs[`${winding}_odCoil`]}) / 2</div>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{w.meanDiameter.toFixed(2)} mm</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Number of turns</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_numberOfTurns`]}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Length of Mean turn (Lmt)</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_lengthMeanTurn`]} meter</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Total length of conductor(L)/Phase</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{report.inputs[`${winding}_totalLengthConductor`]} meter</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Resistance at 75°C (Ohms)</td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{w.resistance75.toFixed(6)} Ω</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">I²R losses/phase at 75°C</td>
+                                                        <td className="equals">=</td>
+                                                        <td>
+                                                            <div className="formula-text">I² × R</div>
+                                                            <div className="formula-text">= {report.inputs[`${winding}_phaseCurrent`]}² × {w.resistance75.toFixed(6)}</div>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{w.copperLoss75.toFixed(2)} W = {(w.copperLoss75/1000).toFixed(3)} kW</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="label">Bare copper weight</td>
+                                                        <td className="equals">=</td>
+                                                        <td>
+                                                            <div className="formula-text">Length × Size × No. of conductors × Density</div>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td className="equals">=</td>
+                                                        <td className="value">{w.bareCooperWeight.toFixed(2)} kg</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    );
+                                })}
+
+                                <div className="border-t-2 border-black pt-4">
+                                    <table className="calc-table">
+                                        <tbody>
+                                            <tr>
+                                                <td className="label">Total I²R losses (all windings)</td>
+                                                <td className="equals">=</td>
+                                                <td>
+                                                    <div className="formula-text">TER + IV + HV losses</div>
+                                                    <div className="formula-text">= {(report.ter.copperLoss75/1000).toFixed(3)} + {(report.iv.copperLoss75/1000).toFixed(3)} + {(report.hv.copperLoss75/1000).toFixed(3)}</div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td></td>
+                                                <td className="equals">=</td>
+                                                <td className="value highlight" style={{fontSize: '1.1em'}}>{(report.totalI2RLosses/1000).toFixed(3)} kW</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="label">Eddy & stray losses</td>
+                                                <td className="equals">=</td>
+                                                <td className="value">{report.inputs.eddyStrayLosses} kW</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="label">Total Load Loss @ 75°C</td>
+                                                <td className="equals">=</td>
+                                                <td>
+                                                    <div className="formula-text">I²R losses + Eddy & stray losses</div>
+                                                    <div className="formula-text">= {(report.totalI2RLosses/1000).toFixed(3)} + {report.inputs.eddyStrayLosses}</div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td></td>
+                                                <td className="equals">=</td>
+                                                <td className="value highlight" style={{fontSize: '1.2em', color: '#000'}}>{(report.totalLoadLoss75/1000).toFixed(3)} kW</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="label">Guaranteed Load loss</td>
+                                                <td className="equals">=</td>
+                                                <td className="value">{report.inputs.guaranteedLoadLoss} kW</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="label">Total bare copper weight (all windings)</td>
+                                                <td className="equals">=</td>
+                                                <td>
+                                                    <div className="formula-text">TER + IV + HV weights</div>
+                                                    <div className="formula-text">= {report.ter.bareCooperWeight.toFixed(2)} + {report.iv.bareCooperWeight.toFixed(2)} + {report.hv.bareCooperWeight.toFixed(2)}</div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td></td>
+                                                <td className="equals">=</td>
+                                                <td className="value highlight" style={{fontSize: '1.1em'}}>{report.totalBareCooperWeight.toFixed(2)} kg</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* Section B Report */}
+                            <div className="section-divider"></div>
+                            <div className="mb-8">
+                                <h3 className="text-lg font-bold mb-4 bg-blue-100 p-2">
+                                    B) CALCULATION OF AUXILIARY LOSS
+                                </h3>
+                                
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">No. of fans in operation for ONAN cooling</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.noOfFansONAN} Nos</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Rating of each fan</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.ratingEachFan} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Total auxiliary losses of fans</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">No. of fans × Rating per fan</div>
+                                                <div className="formula-text">= {report.inputs.noOfFansONAN} × {report.inputs.ratingEachFan}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.auxiliary.totalFanLosses.toFixed(2)} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">No. of pumps in operation for OFAF cooling</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.noOfPumpsOFAF} Nos</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Rating of each pump</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.ratingEachPump} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Total auxiliary losses of pumps</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">No. of pumps × Rating per pump</div>
+                                                <div className="formula-text">= {report.inputs.noOfPumpsOFAF} × {report.inputs.ratingEachPump}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.auxiliary.totalPumpLosses.toFixed(2)} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Total combined auxiliary losses of fans & pumps</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">Fan losses + Pump losses</div>
+                                                <div className="formula-text">= {report.auxiliary.totalFanLosses.toFixed(2)} + {report.auxiliary.totalPumpLosses.toFixed(2)}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td className="value highlight" style={{fontSize: '1.2em', color: '#000'}}>{report.auxiliary.totalCombinedLosses.toFixed(2)} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Total guaranteed auxiliary losses</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.guaranteedAuxiliaryLosses} kW</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core Hot Spot Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper .bg-gray-50 { background-color: transparent !important; }
+            #print-wrapper .bg-green-50 { background-color: transparent !important; }
+            #print-wrapper .bg-red-50 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        /* Formal report section style from PRV example */
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        /* A simple box for showing the formula, like in the PRV example */
+        .formula-box { background-color: #f9fafb; padding: 12px; border-left: 4px solid #d1d5db; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 0.875rem; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Metadata for input fields
+            const inputFieldsMetadata = {
+                guaranteedTopOilTempRise: { label: "Guaranteed Top Oil Temperature Rise", unit: "°C", index: 1 },
+                calculatedTopOilTempRise: { label: "Calculated Top Oil Temp Rise", unit: "°C", index: 2 },
+                maxAmbientTemp: { label: "Maximum Ambient Temperature", unit: "°C", index: 3 },
+                coreGradient_1_0_pu: { label: "Core Gradient at 1.0 pu", unit: "°C", index: 4 },
+                coreGradient_1_05_pu: { label: "Core Gradient at 1.05 pu", unit: "°C", index: 5 },
+                coreGradient_1_1_pu: { label: "Core Gradient at 1.1 pu", unit: "°C", index: 6 },
+                maxPermissibleTemp: { label: "Maximum Permissible Core Hot Spot Temperature", unit: "°C", index: 7, default: "120" },
+            };
+
+            // State for form, report, and errors
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            // Input change handler with validation
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (isNaN(numValue)) {
+                        errorMessage = 'Please enter a valid number.';
+                    } else if (numValue < 0) {
+                        errorMessage = 'Please enter a non-negative number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            // Full form validation
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (isNaN(numValue)) {
+                        newErrors[key] = 'Please enter a valid number.';
+                        isValid = false;
+                    } else if (numValue < 0) {
+                        newErrors[key] = 'Please enter a non-negative number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            // Print handler
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            // Main calculation logic
+            const calculateCoreHotSpot = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const {
+                    guaranteedTopOilTempRise,
+                    calculatedTopOilTempRise,
+                    maxAmbientTemp,
+                    coreGradient_1_0_pu,
+                    coreGradient_1_05_pu,
+                    coreGradient_1_1_pu,
+                    maxPermissibleTemp
+                } = inputs;
+
+                const results = {};
+
+                // Core Hot Spot Temperature Calculation Formula:
+                // Core Hot Spot Temp = Core Gradient + Top Oil Temp Rise + Ambient Temperature
+
+                results.coreHotSpot_1_0_pu = coreGradient_1_0_pu + calculatedTopOilTempRise + maxAmbientTemp;
+                results.check_1_0_pu = results.coreHotSpot_1_0_pu <= maxPermissibleTemp;
+
+                results.coreHotSpot_1_05_pu = coreGradient_1_05_pu + calculatedTopOilTempRise + maxAmbientTemp;
+                results.check_1_05_pu = results.coreHotSpot_1_05_pu <= maxPermissibleTemp;
+
+                results.coreHotSpot_1_1_pu = coreGradient_1_1_pu + calculatedTopOilTempRise + maxAmbientTemp;
+                results.check_1_1_pu = results.coreHotSpot_1_1_pu <= maxPermissibleTemp;
+
+                results.overallCheck = results.check_1_0_pu && results.check_1_05_pu && results.check_1_1_pu;
+                results.topOilCheck = calculatedTopOilTempRise <= guaranteedTopOilTempRise;
+
+                setReport({ ...results, inputs });
+            };
+
+            // Renders input row for the form
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step="any"
+                                    placeholder={`Enter ${meta.label}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            // Renders input row for the report's summary table
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center text-xs">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium text-xs">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-xs"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            // Renders the main App component
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    {/* Header */}
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Core Hot Spot Temperature Calculator
+                        </h1>
+                    </div>
+
+                    {/* Input Form Card */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Core Hot Spot Calculation
+                        </h2>
+                        
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(name => renderInputRow(name))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateCoreHotSpot}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Report Section */}
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">
+                                    CORE HOT SPOT CALCULATION REPORT
+                                </h2>
+                            </div>
+
+                            {/* Section 1: Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <table className="w-full text-xs border-collapse">
+                                    <tbody>
+                                        {Object.keys(inputFieldsMetadata).map(name => renderReportInputRow(name))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 2: Top Oil Temperature Check */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Top Oil Temperature Rise Verification</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Guaranteed Top Oil Temperature Rise:</td>
+                                            <td className="py-1"><span className="highlight">{report.inputs.guaranteedTopOilTempRise.toFixed(2)} °C</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Calculated Top Oil Temp Rise:</td>
+                                            <td className="py-1"><span className="highlight">{report.inputs.calculatedTopOilTempRise.toFixed(2)} °C</span></td>
+                                        </tr>
+                                        <tr className="border-t-2 border-gray-200">
+                                            <td className="py-2 pr-2 font-bold">Top Oil Temperature Check:</td>
+                                            <td className="py-2">
+                                                {report.topOilCheck 
+                                                    ? <span className="result-ok">✓ OK (Calculated ≤ Guaranteed)</span>
+                                                    : <span className="result-fail">✗ FAIL (Calculated &gt; Guaranteed)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 3: Core Hot Spot Calculations */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. Core Hot Spot Temperature Calculations</h3>
+                                <div className="formula-box mb-4">
+                                    <strong>Formula:</strong><br/>
+                                    Core Hot Spot Temperature = Core Gradient + Top Oil Temp Rise + Ambient Temperature
+                                </div>
+
+                                {/* At 1.0 pu */}
+                                <div className="mb-4">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-800">3.1 Calculation at 1.0 pu</h4>
+                                    <table className="w-full text-sm">
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium w-3/5">Calculation:</td>
+                                                <td className="py-1 font-mono text-xs">
+                                                    {report.inputs.coreGradient_1_0_pu.toFixed(2)}°C + {report.inputs.calculatedTopOilTempRise.toFixed(2)}°C + {report.inputs.maxAmbientTemp.toFixed(2)}°C
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Resulting Core Hot Spot Temp:</td>
+                                                <td className="py-1"><span className="highlight text-lg">{report.coreHotSpot_1_0_pu.toFixed(2)} °C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Check (Result ≤ {report.inputs.maxPermissibleTemp}°C):</td>
+                                                <td className="py-1">
+                                                    {report.check_1_0_pu 
+                                                        ? <span className="result-ok">✓ OK</span>
+                                                        : <span className="result-fail">✗ FAIL</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* At 1.05 pu */}
+                                <div className="my-4 pt-4 border-t border-gray-200">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-800">3.2 Calculation at 1.05 pu</h4>
+                                    <table className="w-full text-sm">
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium w-3/5">Calculation:</td>
+                                                <td className="py-1 font-mono text-xs">
+                                                    {report.inputs.coreGradient_1_05_pu.toFixed(2)}°C + {report.inputs.calculatedTopOilTempRise.toFixed(2)}°C + {report.inputs.maxAmbientTemp.toFixed(2)}°C
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Resulting Core Hot Spot Temp:</td>
+                                                <td className="py-1"><span className="highlight text-lg">{report.coreHotSpot_1_05_pu.toFixed(2)} °C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Check (Result ≤ {report.inputs.maxPermissibleTemp}°C):</td>
+                                                <td className="py-1">
+                                                    {report.check_1_05_pu 
+                                                        ? <span className="result-ok">✓ OK</span>
+                                                        : <span className="result-fail">✗ FAIL</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* At 1.1 pu */}
+                                <div className="my-4 pt-4 border-t border-gray-200">
+                                    <h4 className="text-md font-semibold mb-2 text-gray-800">3.3 Calculation at 1.1 pu</h4>
+                                    <table className="w-full text-sm">
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium w-3/5">Calculation:</td>
+                                                <td className="py-1 font-mono text-xs">
+                                                    {report.inputs.coreGradient_1_1_pu.toFixed(2)}°C + {report.inputs.calculatedTopOilTempRise.toFixed(2)}°C + {report.inputs.maxAmbientTemp.toFixed(2)}°C
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Resulting Core Hot Spot Temp:</td>
+                                                <td className="py-1"><span className="highlight text-lg">{report.coreHotSpot_1_1_pu.toFixed(2)} °C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium">Check (Result ≤ {report.inputs.maxPermissibleTemp}°C):</td>
+                                                <td className="py-1">
+                                                    {report.check_1_1_pu 
+                                                        ? <span className="result-ok">✓ OK</span>
+                                                        : <span className="result-fail">✗ FAIL</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* Section 4: Summary Table */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">4. Summary of Results</h3>
+                                <table className="w-full text-sm border-collapse">
+                                    <thead>
+                                        <tr className="bg-blue-100">
+                                            <th className="border p-3">Loading Condition</th>
+                                            <th className="border p-3">Core Hot Spot Temp (°C)</th>
+                                            <th className="border p-3">Max Permissible (°C)</th>
+                                            <th className="border p-3">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td className="border p-3 font-medium">At 1.0 pu</td>
+                                            <td className="border p-3 text-center"><span className="highlight text-lg">{report.coreHotSpot_1_0_pu.toFixed(2)}</span></td>
+                                            <td className="border p-3 text-center">{report.inputs.maxPermissibleTemp.toFixed(2)}</td>
+                                            <td className="border p-3 text-center">
+                                                {report.check_1_0_pu 
+                                                    ? <span className="result-ok">✓ OK</span>
+                                                    : <span className="result-fail">✗ FAIL</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr className="bg-gray-50">
+                                            <td className="border p-3 font-medium">At 1.05 pu</td>
+                                            <td className="border p-3 text-center"><span className="highlight text-lg">{report.coreHotSpot_1_05_pu.toFixed(2)}</span></td>
+                                            <td className="border p-3 text-center">{report.inputs.maxPermissibleTemp.toFixed(2)}</td>
+                                            <td className="border p-3 text-center">
+                                                {report.check_1_05_pu 
+                                                    ? <span className="result-ok">✓ OK</span>
+                                                    : <span className="result-fail">✗ FAIL</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border p-3 font-medium">At 1.1 pu</td>
+                                            <td className="border p-3 text-center"><span className="highlight text-lg">{report.coreHotSpot_1_1_pu.toFixed(2)}</span></td>
+                                            <td className="border p-3 text-center">{report.inputs.maxPermissibleTemp.toFixed(2)}</td>
+                                            <td className="border p-3 text-center">
+                                                {report.check_1_1_pu 
+                                                    ? <span className="result-ok">✓ OK</span>
+                                                    : <span className="result-fail">✗ FAIL</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Final Compliance Status */}
+                            <div className={`p-4 rounded-lg border-2 mt-4 ${report.overallCheck ? 'bg-green-50 border-green-400' : 'bg-red-50 border-red-400'}`}>
+                                <h3 className="text-lg font-bold text-center mb-2">
+                                    Overall Compliance Status: 
+                                    {report.overallCheck 
+                                        ? <span className="result-ok"> ALL CHECKS PASSED</span>
+                                        : <span className="result-fail"> SOME CHECKS FAILED</span>
+                                    }
+                                </h3>
+                                <p className="text-sm text-center text-gray-700">
+                                    {report.overallCheck 
+                                        ? 'Core hot spot temperatures are within permissible limits at all loading conditions.'
+                                        : 'One or more core hot spot temperatures exceed the permissible limit. Review required.'}
+                                </p>
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

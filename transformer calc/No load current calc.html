@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>No Load Current Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+        }
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .calc-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        .calc-table td { padding: 8px 12px; vertical-align: top; }
+        .calc-table .label { width: 60%; font-weight: 500; }
+        .calc-table .equals { width: 5%; text-align: center; }
+        .calc-table .value { width: 35%; font-weight: bold; }
+        .section-divider { border-top: 2px solid #333; margin: 20px 0; }
+        .formula-text { font-family: 'Courier New', monospace; font-size: 0.9em; color: #444; margin: 5px 0; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            const inputFieldsMetadata = {
+                noLoadLoss: { label: "No Load Loss", unit: "kW", index: 1 },
+                hvVoltage: { label: "HV Voltage", unit: "kV", index: 2 },
+                hvPhaseCurrent: { label: "HV Phase Current", unit: "A", index: 3 },
+                fluxDensity: { label: "Flux Density at Rated Voltage & Frequency (Bmax)", unit: "Tesla", index: 4 },
+                coreMaterial: { label: "Core Material Used", unit: "", index: 5, isText: true },
+                totalCoreWeight: { label: "Total Core Weight", unit: "kg", index: 6 },
+                buildingFactor: { label: "Building Factor", unit: "", index: 7 },
+                vaPerKg: { label: "VA/Kg (from exciting power graph corresponding to flux density)", unit: "VA/kg", index: 8 },
+                vaRatingTransformer: { label: "VA Rating of Transformer", unit: "VA", index: 9 },
+            };
+
+            const [formData, setFormData] = React.useState({
+                noLoadLoss: '',
+                hvVoltage: '',
+                hvPhaseCurrent: '',
+                fluxDensity: '',
+                coreMaterial: '',
+                totalCoreWeight: '',
+                buildingFactor: '',
+                vaPerKg: '',
+                vaRatingTransformer: '',
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const meta = inputFieldsMetadata[name];
+
+                    if (meta.isText) {
+                        if (!value.trim()) {
+                            errorMessage = 'This field is required.';
+                        }
+                    } else {
+                        const trimmedValue = value.trim();
+                        const numValue = parseFloat(trimmedValue);
+
+                        if (!trimmedValue) {
+                            errorMessage = 'This field is required.';
+                        } else if (isNaN(numValue) || numValue <= 0) {
+                            errorMessage = 'Please enter a valid positive number.';
+                        }
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const meta = inputFieldsMetadata[key];
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (!meta.isText) {
+                        const numValue = parseFloat(value);
+                        if (isNaN(numValue) || numValue <= 0) {
+                            newErrors[key] = 'Please enter a valid positive number.';
+                            isValid = false;
+                        }
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateNoLoadCurrent = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    if (inputFieldsMetadata[key].isText) {
+                        inputs[key] = formData[key];
+                    } else {
+                        inputs[key] = parseFloat(formData[key]);
+                    }
+                });
+
+                const results = {};
+
+                // Step 1: Calculate total VA drawn by core
+                results.totalVADrawnByCore = inputs.totalCoreWeight * inputs.vaPerKg * inputs.buildingFactor;
+
+                // Step 2: Calculate magnetizing current component Im (%)
+                results.magnetizingCurrentPercent = (results.totalVADrawnByCore / inputs.vaRatingTransformer) * 100;
+
+                // Step 3: Calculate magnetizing current component Im (Amps in HV side)
+                results.magnetizingCurrentAmps = (results.magnetizingCurrentPercent * inputs.hvPhaseCurrent) / 100;
+
+                // Step 4: Calculate core loss current component Iw (refer to HV side)
+                results.coreLossCurrent = inputs.noLoadLoss / inputs.hvVoltage;
+
+                // Step 5: Calculate No Load Current
+                results.noLoadCurrent = Math.sqrt(
+                    Math.pow(results.magnetizingCurrentAmps, 2) + 
+                    Math.pow(results.coreLossCurrent, 2)
+                );
+
+                setReport({ ...results, inputs });
+            };
+
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                {meta.isText ? (
+                                    <input
+                                        type="text"
+                                        name={name}
+                                        value={formData[name]}
+                                        onChange={handleInputChange}
+                                        className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                        placeholder={`Enter ${meta.label}`}
+                                        aria-label={meta.label}
+                                    />
+                                ) : (
+                                    <input
+                                        type="number"
+                                        name={name}
+                                        value={formData[name]}
+                                        onChange={handleInputChange}
+                                        className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                        step="any"
+                                        placeholder={`Enter ${meta.label}`}
+                                        aria-label={meta.label}
+                                    />
+                                )}
+                                {meta.unit && <span className="ml-2 whitespace-nowrap">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            No Load Current Calculator
+                        </h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for No Load Current Calculation
+                        </h2>
+                        
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(name => renderInputRow(name))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                               Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateNoLoadCurrent}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-2 text-center">
+                                    NO LOAD CURRENT CALCULATION :
+                                </h2>
+                            </div>
+
+                            {/* Simple Table Format */}
+                            <table className="calc-table">
+                                <tbody>
+                                    {/* Section A - Input Parameters */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">No load Loss</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.noLoadLoss} kW</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">HV voltage</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.hvVoltage} kV</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">HV phase current</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.hvPhaseCurrent} A</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Flux density at rated voltage & frequency, Bmax</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.fluxDensity} Tesla</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Core material used</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.coreMaterial}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Total core weight</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.totalCoreWeight} kg</td>
+                                    </tr>
+                                    
+                                    {/* Section B */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Building factor</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.buildingFactor}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">VA/Kg (from exciting power graph corresponding to {report.inputs.fluxDensity} Tesla)</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.vaPerKg} VA/kg</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Hence total VA drawn by core</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">Core wt x VA/kg x Building factor</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">{report.inputs.totalCoreWeight} x {report.inputs.vaPerKg} x {report.inputs.buildingFactor}</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.totalVADrawnByCore.toFixed(2)} VA</td>
+                                    </tr>
+
+                                    {/* Section C */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">VA rating of transformer</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.inputs.vaRatingTransformer.toLocaleString()} VA</td>
+                                    </tr>
+
+                                    {/* Section D */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Magnetizing current component Im (%)</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">(VA drawn by core/ VA rating of Transformer) x 100</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">{report.totalVADrawnByCore.toFixed(2)} / {report.inputs.vaRatingTransformer} x 100</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.magnetizingCurrentPercent.toFixed(4)} %</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Magnetizing current component Im (Amps in HV side)</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">(Im x HV phase current)/100</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">( {report.magnetizingCurrentPercent.toFixed(4)} x {report.inputs.hvPhaseCurrent} ) / 100</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.magnetizingCurrentAmps.toFixed(3)} Amp (Approx)</td>
+                                    </tr>
+
+                                    {/* Section D continued */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">Core loss current component Iw (refer to HV side)</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">Core loss(kW)/ HV Voltage (kV)</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">{report.inputs.noLoadLoss} / {report.inputs.hvVoltage}</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td className="value">{report.coreLossCurrent.toFixed(3)} Amp</td>
+                                    </tr>
+
+                                    {/* Section E - Final Result */}
+                                    <tr>
+                                    </tr>
+                                    <tr>
+                                        <td className="label">So, NO LOAD CURRENT</td>
+                                        <td className="equals">=</td>
+                                        <td className="value">√(Im² + Iw²)</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">√({report.magnetizingCurrentAmps.toFixed(3)}² + {report.coreLossCurrent.toFixed(3)}²)</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td>
+                                            <div className="formula-text">√({Math.pow(report.magnetizingCurrentAmps, 2).toFixed(6)} + {Math.pow(report.coreLossCurrent, 2).toFixed(6)})</div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td className="equals">=</td>
+                                        <td className="value" style={{fontSize: '1.2em', color: '#000'}}>
+                                            {report.noLoadCurrent.toFixed(3)} Amps (Approx)
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

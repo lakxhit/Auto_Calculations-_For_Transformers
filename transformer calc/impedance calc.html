@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Impedance Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * {
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+                -webkit-print-color-adjust: exact; /* Chrome, Safari */
+                color-adjust: exact; /* Firefox */
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button, #print-wrapper .generate-button-container { display: none !important; }
+            /* Ensure result colors print */
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; border-bottom: 1px solid #ccc; }
+             #print-wrapper .bg-gray-100 { background-color: transparent !important; border-bottom: 1px solid #ccc;}
+            #print-wrapper table { border-collapse: collapse; width: 100%; }
+            #print-wrapper th { background-color: #f2f2f2 !important; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000 !important; padding: 6px; }
+            #print-wrapper h1, #print-wrapper h2, #print-wrapper h3 { color: black !important; }
+            /* Hide input fields in print view */
+            #print-wrapper input { display: none; }
+             /* Hide placeholder text in print view */
+            #print-wrapper input::placeholder { color: transparent !important; }
+            /* Display the value next to the label for printing */
+            #print-wrapper .print-value::after {
+              content: attr(data-print-value); /* Use a data attribute to show the value */
+              display: inline;
+              margin-left: 5px; /* Add some space */
+              font-weight: normal; /* Reset font weight if needed */
+            }
+
+        }
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; font-size: 0.875rem; }
+            input[type=number] { padding: 4px; }
+            .unit-span { font-size: 0.75rem; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        .unit-span { margin-left: 4px; white-space: nowrap; font-size: 0.875rem; color: #4b5563; }
+        input[type=number] {
+            text-align: right; /* User input stays right-aligned */
+            /* Add padding to prevent overlap with left-aligned placeholder */
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+            position: relative; /* Needed for placeholder positioning trick */
+        }
+         /* Style the placeholder */
+        input[type=number]::placeholder {
+            color: #9ca3af; /* Light gray */
+            text-align: left; /* Align placeholder text to the left */
+            font-style: italic;
+            opacity: 0.7;
+            /* Ensure placeholder text doesn't overlap typed text */
+             /* We control alignment via text-align, no need for absolute position */
+        }
+        .table-section-header th {
+            background-color: #dbeafe;
+            text-align: center;
+            font-weight: bold;
+            padding: 8px;
+            border: 1px solid #bfdbfe;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Metadata for input fields - label, unit, placeholder
+            const inputFieldsMetadata = {
+                // HV-IV
+                hvIvN: { label: "Relevant Turns (N)", unit: "", placeholder: "e.g., 394" },
+                hvIvI: { label: "Phase Current (I)", unit: "Amps", placeholder: "e.g., 723.13" },
+                hvIvATD: { label: "Ampere Turn Area (ATD)", unit: "", placeholder: "e.g., 50818.02" },
+                hvIvVT: { label: "Voltage/Turn (V/T)", unit: "V", placeholder: "e.g., 264.62" },
+                hvIvLeff: { label: "Effective Height (Leff)", unit: "mm", placeholder: "e.g., 2120" },
+                hvIvK: { label: "Rogowski Factor (K)", unit: "", placeholder: "e.g., 0.93" },
+                hvIvAF: { label: "Auto Factor (AF)", unit: "", placeholder: "e.g., 0.45" },
+                guaranteedHvIv: { label: "Guaranteed Impedance", unit: "%", placeholder: "e.g., 12.5" },
+                toleranceHvIv: { label: "Tolerance", unit: "%", placeholder: "e.g., 10" },
+                // HV-TER
+                hvTerN: { label: "Relevant Turns (N)", unit: "", placeholder: "e.g., 874" },
+                hvTerI: { label: "Phase Current (I)", unit: "Amps", placeholder: "e.g., 723.13" },
+                hvTerATD: { label: "Ampere Turn Area (ATD)", unit: "", placeholder: "e.g., 32048.6" },
+                hvTerVT: { label: "Voltage/Turn (V/T)", unit: "V", placeholder: "e.g., 264.62" },
+                hvTerLeff: { label: "Effective Height (Leff)", unit: "mm", placeholder: "e.g., 2100" },
+                hvTerK: { label: "Rogowski Factor (K)", unit: "", placeholder: "e.g., 0.91" },
+                guaranteedHvTer: { label: "Guaranteed Impedance", unit: "%", placeholder: "e.g., 45" },
+                toleranceHvTer: { label: "Tolerance", unit: "%", placeholder: "e.g., 15" },
+                // IV-TER
+                ivTerN: { label: "Relevant Turns (N)", unit: "", placeholder: "e.g., 480" },
+                ivTerI: { label: "Phase Current (I)", unit: "Amps", placeholder: "e.g., 1314.78" },
+                ivTerATD: { label: "Ampere Turn Area (ATD)", unit: "", placeholder: "e.g., 19202.05" },
+                ivTerVT: { label: "Voltage/Turn (V/T)", unit: "V", placeholder: "e.g., 264.62" },
+                ivTerLeff: { label: "Effective Height (Leff)", unit: "mm", placeholder: "e.g., 2100" },
+                ivTerK: { label: "Rogowski Factor (K)", unit: "", placeholder: "e.g., 0.965" },
+                guaranteedIvTer: { label: "Guaranteed Impedance", unit: "%", placeholder: "e.g., 30" },
+                toleranceIvTer: { label: "Tolerance", unit: "%", placeholder: "e.g., 15" },
+            };
+
+            // Initialize state with empty strings
+            const [formData, setFormData] = useState({
+                hvIvN: '', hvIvI: '', hvIvATD: '', hvIvVT: '', hvIvLeff: '', hvIvK: '', hvIvAF: '', guaranteedHvIv: '', toleranceHvIv: '',
+                hvTerN: '', hvTerI: '', hvTerATD: '', hvTerVT: '', hvTerLeff: '', hvTerK: '', guaranteedHvTer: '', toleranceHvTer: '',
+                ivTerN: '', ivTerI: '', ivTerATD: '', ivTerVT: '', ivTerLeff: '', ivTerK: '', guaranteedIvTer: '', toleranceIvTer: '',
+            });
+
+            const [report, setReport] = useState(null);
+            const [errors, setErrors] = useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = String(value ?? '').trim(); // Ensure value is treated as string
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'Required.';
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        errorMessage = 'Must be a non-negative number.';
+                    } else if ((name.startsWith('tolerance') || name.startsWith('guaranteed')) && numValue <= 0) {
+                        errorMessage = 'Must be positive.';
+                    }
+
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+                    return newErrors;
+                });
+            };
+
+             const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    if (!String(value ?? '').trim()) { // Ensure value is treated as string
+                        newErrors[key] = 'Required.';
+                        isValid = false;
+                    } else if (isNaN(numValue) || numValue < 0) {
+                         newErrors[key] = 'Must be a non-negative number.';
+                         isValid = false;
+                     } else if ((key.startsWith('tolerance') || key.startsWith('guaranteed')) && numValue <=0 ){
+                         newErrors[key] = 'Must be positive.';
+                         isValid = false;
+                    }
+                });
+                setErrors(newErrors);
+                return isValid;
+            };
+
+            const calculateImpedance = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const Pi = Math.PI;
+                const Constant = 2540;
+
+                // --- HV-IV Calculation ---
+                const N_hvIv = parseFloat(formData.hvIvN);
+                const I_hvIv = parseFloat(formData.hvIvI);
+                const ATD_hvIv = parseFloat(formData.hvIvATD);
+                const VT_hvIv = parseFloat(formData.hvIvVT);
+                const Leff_hvIv = parseFloat(formData.hvIvLeff);
+                const K_hvIv = parseFloat(formData.hvIvK);
+                const AF_hvIv = parseFloat(formData.hvIvAF);
+                const guaranteed_hvIv = parseFloat(formData.guaranteedHvIv);
+                const tolerance_hvIv = parseFloat(formData.toleranceHvIv);
+
+                const numerator_hvIv = N_hvIv * I_hvIv * ATD_hvIv * Pi * K_hvIv * AF_hvIv;
+                const denominator_hvIv = Constant * VT_hvIv * Leff_hvIv;
+                const calculatedX_hvIv = denominator_hvIv !== 0 ? numerator_hvIv / denominator_hvIv : 0;
+
+                const lowerLimit_hvIv = guaranteed_hvIv * (1 - tolerance_hvIv / 100);
+                const upperLimit_hvIv = guaranteed_hvIv * (1 + tolerance_hvIv / 100);
+                const status_hvIv = calculatedX_hvIv >= lowerLimit_hvIv && calculatedX_hvIv <= upperLimit_hvIv;
+
+                // --- HV-TER Calculation ---
+                const N_hvTer = parseFloat(formData.hvTerN);
+                const I_hvTer = parseFloat(formData.hvTerI);
+                const ATD_hvTer = parseFloat(formData.hvTerATD);
+                const VT_hvTer = parseFloat(formData.hvTerVT);
+                const Leff_hvTer = parseFloat(formData.hvTerLeff);
+                const K_hvTer = parseFloat(formData.hvTerK);
+                const guaranteed_hvTer = parseFloat(formData.guaranteedHvTer);
+                const tolerance_hvTer = parseFloat(formData.toleranceHvTer);
+
+                const numerator_hvTer = N_hvTer * I_hvTer * ATD_hvTer * Pi * K_hvTer; // No AF here
+                const denominator_hvTer = Constant * VT_hvTer * Leff_hvTer;
+                const calculatedX_hvTer = denominator_hvTer !== 0 ? numerator_hvTer / denominator_hvTer : 0;
+
+                const lowerLimit_hvTer = guaranteed_hvTer * (1 - tolerance_hvTer / 100);
+                const upperLimit_hvTer = guaranteed_hvTer * (1 + tolerance_hvTer / 100);
+                const status_hvTer = calculatedX_hvTer >= lowerLimit_hvTer && calculatedX_hvTer <= upperLimit_hvTer;
+
+                // --- IV-TER Calculation ---
+                const N_ivTer = parseFloat(formData.ivTerN);
+                const I_ivTer = parseFloat(formData.ivTerI);
+                const ATD_ivTer = parseFloat(formData.ivTerATD);
+                const VT_ivTer = parseFloat(formData.ivTerVT);
+                const Leff_ivTer = parseFloat(formData.ivTerLeff);
+                const K_ivTer = parseFloat(formData.ivTerK);
+                const guaranteed_ivTer = parseFloat(formData.guaranteedIvTer);
+                const tolerance_ivTer = parseFloat(formData.toleranceIvTer);
+
+                const numerator_ivTer = N_ivTer * I_ivTer * ATD_ivTer * Pi * K_ivTer; // No AF here
+                const denominator_ivTer = Constant * VT_ivTer * Leff_ivTer;
+                const calculatedX_ivTer = denominator_ivTer !== 0 ? numerator_ivTer / denominator_ivTer : 0;
+
+                const lowerLimit_ivTer = guaranteed_ivTer * (1 - tolerance_ivTer / 100);
+                const upperLimit_ivTer = guaranteed_ivTer * (1 + tolerance_ivTer / 100);
+                const status_ivTer = calculatedX_ivTer >= lowerLimit_ivTer && calculatedX_ivTer <= upperLimit_ivTer;
+
+                setReport({
+                    // Store inputs (explicit)
+                    inputs: { ...formData },
+                    // Store results
+                    hvIv: { calculated: calculatedX_hvIv, lower: lowerLimit_hvIv, upper: upperLimit_hvIv, status: status_hvIv },
+                    hvTer: { calculated: calculatedX_hvTer, lower: lowerLimit_hvTer, upper: upperLimit_hvTer, status: status_hvTer },
+                    ivTer: { calculated: calculatedX_ivTer, lower: lowerLimit_ivTer, upper: upperLimit_ivTer, status: status_ivTer },
+                });
+            };
+
+            const handleDownloadPDF = () => { window.print(); };
+
+             // Helper to render input rows in the table
+             // Uses standard placeholder attribute
+            const renderInputRow = (pairPrefix, fieldName) => {
+                 const fullFieldName = fieldName ? `${pairPrefix}${fieldName}` : pairPrefix;
+                 const meta = inputFieldsMetadata[fullFieldName];
+                 if (!meta) return null;
+
+                 return (
+                     <tr key={fullFieldName}>
+                         <td className="border border-gray-300 p-2 font-semibold">{meta.label}<span className="text-red-600">*</span></td>
+                         <td className="border border-gray-300 p-2">
+                             <div className="flex items-center justify-end relative"> {/* Added relative positioning */}
+                                <input
+                                    type="number"
+                                    name={fullFieldName}
+                                    value={formData[fullFieldName]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-1 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 ${errors[fullFieldName] ? 'input-error' : ''}`}
+                                    step="any"
+                                    min="0"
+                                    placeholder={meta.placeholder} // Use standard placeholder
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="unit-span">{meta.unit}</span>}
+                             </div>
+                             {errors[fullFieldName] && <div className="error-message text-right">{errors[fullFieldName]}</div>}
+                         </td>
+                     </tr>
+                 );
+             };
+
+
+            return (
+                <div className="container mx-auto p-4 max-w-4xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">Transformer Impedance Calculation</h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">Impedance Calculation Inputs</h2>
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-gray-100"><th className="border border-gray-300 p-2">Parameter</th><th className="border border-gray-300 p-2">Value</th></tr>
+                            </thead>
+                            <tbody>
+                                {/* HV-IV Section */}
+                                <tr className="table-section-header"><th colSpan="2">1. HV - IV Winding (Normal Tap)</th></tr>
+                                {renderInputRow('hvIv', 'N')}
+                                {renderInputRow('hvIv', 'I')}
+                                {renderInputRow('hvIv', 'ATD')}
+                                {renderInputRow('hvIv', 'VT')}
+                                {renderInputRow('hvIv', 'Leff')}
+                                {renderInputRow('hvIv', 'K')}
+                                {renderInputRow('hvIv', 'AF')}
+                                {renderInputRow('guaranteedHvIv')}
+                                {renderInputRow('toleranceHvIv')}
+
+                                {/* HV-TER Section */}
+                                <tr className="table-section-header"><th colSpan="2">2. HV - TER Winding (Normal Tap)</th></tr>
+                                {renderInputRow('hvTer', 'N')}
+                                {renderInputRow('hvTer', 'I')}
+                                {renderInputRow('hvTer', 'ATD')}
+                                {renderInputRow('hvTer', 'VT')}
+                                {renderInputRow('hvTer', 'Leff')}
+                                {renderInputRow('hvTer', 'K')}
+                                {renderInputRow('guaranteedHvTer')}
+                                {renderInputRow('toleranceHvTer')}
+
+                                {/* IV-TER Section */}
+                                <tr className="table-section-header"><th colSpan="2">3. IV - TER Winding (Normal Tap)</th></tr>
+                                {renderInputRow('ivTer', 'N')}
+                                {renderInputRow('ivTer', 'I')}
+                                {renderInputRow('ivTer', 'ATD')}
+                                {renderInputRow('ivTer', 'VT')}
+                                {renderInputRow('ivTer', 'Leff')}
+                                {renderInputRow('ivTer', 'K')}
+                                {renderInputRow('guaranteedIvTer')}
+                                {renderInputRow('toleranceIvTer')}
+                            </tbody>
+                        </table>
+
+                         {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                            </div>
+                        )}
+                        <div className="mt-6 flex justify-center generate-button-container">
+                            <button
+                                onClick={calculateImpedance}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                             {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                     <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                     />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">Impedance Calculation Report</h2>
+                            </div>
+
+                             {/* --- SECTION: INPUT PARAMETERS --- */}
+                             <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters (Normal Tap)</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                   {/* Column 1: HV-IV */}
+                                   <div>
+                                     <h4 className="font-bold text-center mb-2 underline">HV-IV Winding</h4>
+                                     {Object.keys(inputFieldsMetadata)
+                                       .filter(key => key.startsWith('hvIv')) // Simplified filter
+                                       .map(key => (
+                                         <p key={key} className="mb-1"><span className="font-medium">{inputFieldsMetadata[key].label}:</span> <span className="highlight print-value" data-print-value={`${report.inputs[key]} ${inputFieldsMetadata[key].unit}`}>{report.inputs[key]} {inputFieldsMetadata[key].unit}</span></p>
+                                     ))}
+                                   </div>
+                                    {/* Column 2: HV-TER */}
+                                   <div>
+                                     <h4 className="font-bold text-center mb-2 underline">HV-TER Winding</h4>
+                                      {Object.keys(inputFieldsMetadata)
+                                       .filter(key => key.startsWith('hvTer')) // Simplified filter
+                                       .map(key => (
+                                         <p key={key} className="mb-1"><span className="font-medium">{inputFieldsMetadata[key].label}:</span> <span className="highlight print-value" data-print-value={`${report.inputs[key]} ${inputFieldsMetadata[key].unit}`}>{report.inputs[key]} {inputFieldsMetadata[key].unit}</span></p>
+                                     ))}
+                                   </div>
+                                    {/* Column 3: IV-TER */}
+                                   <div>
+                                     <h4 className="font-bold text-center mb-2 underline">IV-TER Winding</h4>
+                                      {Object.keys(inputFieldsMetadata)
+                                       .filter(key => key.startsWith('ivTer')) // Simplified filter
+                                       .map(key => (
+                                         <p key={key} className="mb-1"><span className="font-medium">{inputFieldsMetadata[key].label}:</span> <span className="highlight print-value" data-print-value={`${report.inputs[key]} ${inputFieldsMetadata[key].unit}`}>{report.inputs[key]} {inputFieldsMetadata[key].unit}</span></p>
+                                     ))}
+                                   </div>
+                                </div>
+                             </div>
+
+                             {/* --- SECTION: CALCULATION RESULTS --- */}
+                             <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Calculation Results</h3>
+                                <table className="w-full text-sm border-collapse border border-gray-300">
+                                   <thead>
+                                     <tr className="bg-blue-100">
+                                       <th className="border border-gray-300 p-2">Parameter</th>
+                                       <th className="border border-gray-300 p-2">Calculated Impedance (%X)</th>
+                                       <th className="border border-gray-300 p-2">Guaranteed Range (%)</th>
+                                       <th className="border border-gray-300 p-2">Status</th>
+                                     </tr>
+                                   </thead>
+                                   <tbody>
+                                     {/* HV-IV Row */}
+                                     <tr>
+                                       <td className="border border-gray-300 p-2 font-medium">HV - IV (Normal Tap)</td>
+                                       <td className="border border-gray-300 p-2 text-center highlight">{report.hvIv.calculated.toFixed(2)} %</td>
+                                       <td className="border border-gray-300 p-2 text-center">{report.hvIv.lower.toFixed(2)} % - {report.hvIv.upper.toFixed(2)} %</td>
+                                       <td className={`border border-gray-300 p-2 text-center ${report.hvIv.status ? 'result-ok' : 'result-fail'}`}>
+                                           {report.hvIv.status ? 'Parameter surpassed' : 'Parameter not surpassed'}
+                                       </td>
+                                     </tr>
+                                     {/* HV-TER Row */}
+                                     <tr>
+                                       <td className="border border-gray-300 p-2 font-medium">HV - TER (Normal Tap)</td>
+                                       <td className="border border-gray-300 p-2 text-center highlight">{report.hvTer.calculated.toFixed(2)} %</td>
+                                       <td className="border border-gray-300 p-2 text-center">{report.hvTer.lower.toFixed(2)} % - {report.hvTer.upper.toFixed(2)} %</td>
+                                       <td className={`border border-gray-300 p-2 text-center ${report.hvTer.status ? 'result-ok' : 'result-fail'}`}>
+                                           {report.hvTer.status ? 'Parameter surpassed' : 'Parameter not surpassed'}
+                                       </td>
+                                     </tr>
+                                      {/* IV-TER Row */}
+                                     <tr>
+                                       <td className="border border-gray-300 p-2 font-medium">IV - TER (Normal Tap)</td>
+                                       <td className="border border-gray-300 p-2 text-center highlight">{report.ivTer.calculated.toFixed(2)} %</td>
+                                       <td className="border border-gray-300 p-2 text-center">{report.ivTer.lower.toFixed(2)} % - {report.ivTer.upper.toFixed(2)} %</td>
+                                       <td className={`border border-gray-300 p-2 text-center ${report.ivTer.status ? 'result-ok' : 'result-fail'}`}>
+                                           {report.ivTer.status ? 'Parameter surpassed' : 'Parameter not surpassed'}
+                                       </td>
+                                     </tr>
+                                   </tbody>
+                                </table>
+                                <p className="text-xs text-gray-600 mt-2">*Guaranteed Range = Guaranteed Impedance ± Tolerance</p>
+                             </div>
+
+                             {/* Print Button */}
+                             <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                             </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

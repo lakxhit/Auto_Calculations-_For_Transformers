@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Inrush Current Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * {
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; width: 100%; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+            #print-wrapper .formula-display {
+                font-family: 'Times New Roman', Times, serif; /* Or a suitable font for formulas */
+                text-align: center;
+                margin: 15px 0;
+                padding: 10px;
+                background-color: #f0f0f0 !important; /* Light gray background for visibility */
+                border: 1px solid #ccc !important;
+            }
+        }
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        .formula-display {
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 1.1em;
+            text-align: center;
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        .formula-display .numerator {
+            display: inline-block;
+            border-bottom: 1px solid black;
+            padding-bottom: 2px;
+            margin-bottom: 2px;
+        }
+        .formula-display .denominator {
+            display: inline-block;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Mapping for display labels and units
+            const inputFieldsMetadata = {
+                Bmp: { label: "Peak Steady State Flux Density (Bmp)", unit: "Tesla", index: 1, placeholder: "e.g., 1.65" },
+                Br: { label: "Residual Flux Density (Br)", unit: "Tesla", index: 2, placeholder: "e.g., 1.32" },
+                Ac: { label: "Net Area of Core (Ac)", unit: "m²", index: 3, placeholder: "e.g., 0.7222" },
+                Aw: { label: "Mean Turn Area of Energized Winding (Aw)", unit: "m²", index: 4, placeholder: "e.g., 3.52" },
+                N1: { label: "Turns per Leg (Energized Winding) (N1)", unit: "Turns", index: 5, placeholder: "e.g., 394" },
+                hw: { label: "Energized Winding Height (hw)", unit: "m", index: 6, placeholder: "e.g., 2.12" },
+            };
+
+            const [formData, setFormData] = React.useState({
+                Bmp: '', Br: '', Ac: '', Aw: '', N1: '', hw: ''
+            });
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            // Auto-calculate Br when Bmp changes, assuming CRGO material
+             React.useEffect(() => {
+                const bmpValue = parseFloat(formData.Bmp);
+                if (!isNaN(bmpValue) && bmpValue > 0) {
+                     // Calculate Br = 0.8 * Bmp for CRGO (as per formula note)
+                     const calculatedBr = (0.8 * bmpValue).toFixed(5); // Adjust precision as needed
+                     setFormData(prev => ({ ...prev, Br: calculatedBr }));
+                 } else if (!formData.Bmp) {
+                    // Optionally clear Br if Bmp is cleared
+                     // setFormData(prev => ({ ...prev, Br: '' }));
+                 }
+             }, [formData.Bmp]);
+
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (name === 'N1') { // Turns must be a positive integer
+                        if (!Number.isInteger(numValue) || numValue < 1) {
+                            errorMessage = 'Please enter a positive integer.';
+                        }
+                    } else if (isNaN(numValue) || numValue <= 0) { // Other inputs positive numbers
+                        errorMessage = 'Please enter a valid positive number.';
+                    }
+
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+                const numericPositiveKeys = ['Bmp', 'Br', 'Ac', 'Aw', 'hw'];
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (numericPositiveKeys.includes(key) && (isNaN(numValue) || numValue <= 0)) {
+                        newErrors[key] = 'Please enter a valid positive number.';
+                        isValid = false;
+                    } else if (key === 'N1' && (!Number.isInteger(numValue) || numValue < 1)) {
+                        newErrors[key] = 'Please enter a positive integer for Turns.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateInrush = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                // --- Get User Inputs ---
+                const Bmp = parseFloat(formData.Bmp);
+                const Br = parseFloat(formData.Br);
+                const Ac = parseFloat(formData.Ac);
+                const Aw = parseFloat(formData.Aw);
+                const N1 = parseInt(formData.N1);
+                const hw = parseFloat(formData.hw);
+
+                // --- Constants ---
+                const MU0 = 4 * Math.PI * 1e-7; // Permeability of free space (H/m)
+                const CONSTANT_TERM = 2.03; // Constant term in the formula numerator
+
+                // --- Calculations ---
+                const numerator = (2 * Bmp + Br - CONSTANT_TERM) * Ac * hw;
+                const denominator = MU0 * Aw * N1;
+
+                let Iomax = NaN;
+                let calculationError = null;
+
+                if (denominator === 0) {
+                     calculationError = "Calculation error: Denominator is zero (Aw or N1 cannot be zero).";
+                } else {
+                     Iomax = numerator / denominator;
+                }
+
+                // --- Store results in report state ---
+                setReport({
+                    Bmp, Br, Ac, Aw, N1, hw, // Inputs
+                    Iomax, calculationError // Output and potential error
+                });
+            };
+
+            // Helper to render input rows in the table (for input form)
+            const renderInputRow = (label, name, placeholder, unit, index) => (
+                <tr key={name}>
+                    <td className="border border-gray-300 p-3 text-center">{index}</td>
+                    <td className="border border-gray-300 p-3 font-semibold">{label} <span className="text-red-600">*</span></td>
+                    <td className="border border-gray-300 p-3">
+                        <div className="flex items-center">
+                            <input
+                                type="number"
+                                name={name}
+                                value={formData[name]}
+                                onChange={handleInputChange}
+                                className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                step={name === 'N1' ? "1" : "any"}
+                                min={name === 'N1' ? "1" : "0"}
+                                placeholder={placeholder}
+                                aria-label={label}
+                            />
+                            {unit && <span className="ml-2 whitespace-nowrap">{unit}</span>}
+                        </div>
+                        {errors[name] && <div className="error-message">{errors[name]}</div>}
+                    </td>
+                </tr>
+            );
+
+            // Helper to render input rows in the table (for report output)
+            const renderReportInputRow = (name, value) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center">{meta.index}</td>
+                        <td className="w-4/5 border p-2 font-medium">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-right"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            return (
+                <div className="container mx-auto p-4 max-w-4xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">Transformer Inrush Current Calculation</h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">Inrush Current Calculation Inputs</h2>
+                        
+                        {/* Formula Display */}
+                         <div className="formula-display">
+                            I<sub>omax</sub> = 
+                            <div className="inline-block relative mx-2 align-middle">
+                                <span className="numerator px-2">(2 × B<sub>mp</sub> + B<sub>r</sub> - 2.03) × A<sub>c</sub> × h<sub>w</sub></span>
+                                <span className="denominator px-2">μ<sub>0</sub> × A<sub>w</sub> × N<sub>1</sub></span>
+                            </div>
+                         </div>
+                         <p className="text-xs text-center text-gray-600 mb-4">where μ<sub>0</sub> = 4π × 10<sup>-7</sup> H/m</p>
+
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-8">
+                            <thead><tr className="bg-blue-100"><th className="border border-gray-300 p-3 w-16">Sr. No.</th><th className="border border-gray-300 p-3">Description</th><th className="border border-gray-300 p-3">Enter Value</th></tr></thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(key =>
+                                    renderInputRow(inputFieldsMetadata[key].label, key, inputFieldsMetadata[key].placeholder, inputFieldsMetadata[key].unit, inputFieldsMetadata[key].index)
+                                )}
+                            </tbody>
+                        </table>
+
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                            </div>
+                        )}
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateInrush}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">Inrush Current Calculation Report</h2>
+                            </div>
+
+                             {/* Formula Display in Report */}
+                             <div className="formula-display print:formula-display">
+                                I<sub>omax</sub> = 
+                                <div className="inline-block relative mx-2 align-middle">
+                                    <span className="numerator px-2">(2 × B<sub>mp</sub> + B<sub>r</sub> - 2.03) × A<sub>c</sub> × h<sub>w</sub></span>
+                                    <span className="denominator px-2">μ<sub>0</sub> × A<sub>w</sub> × N<sub>1</sub></span>
+                                </div>
+                             </div>
+                             <p className="text-xs text-center text-gray-600 mb-4 print:text-xs">where μ<sub>0</sub> = 4π × 10<sup>-7</sup> H/m</p>
+
+                            {/* --- INPUT PARAMETERS Section --- */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters</h3>
+                                <table className="w-full text-sm border-collapse input-param-table">
+                                    <thead><tr className="bg-blue-100"><th>Sr. No.</th><th>Description</th><th className="text-right">Value</th></tr></thead>
+                                    <tbody>
+                                        {Object.keys(inputFieldsMetadata).map(key =>
+                                            renderReportInputRow(key, report[key])
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* --- Calculation Results Section --- */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Calculation Result</h3>
+                                {report.calculationError ? (
+                                    <p className="text-red-600 font-bold">{report.calculationError}</p>
+                                ) : (
+                                    <table className="w-full text-sm">
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1 pr-2 font-medium w-3/5">Calculated First Peak Inrush Current (I<sub>omax</sub>):</td>
+                                                <td className="py-1"><span className="highlight text-xl text-green-700">{report.Iomax.toFixed(2)} Amps</span></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

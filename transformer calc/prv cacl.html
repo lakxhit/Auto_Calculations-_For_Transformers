@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer PRV Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            /* FIX: Use a custom ID for the printable wrapper and target it */
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            /* Reset colors/backgrounds for printing elements */
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Mapping for display labels and units in the report's input table
+            const inputFieldsMetadata = {
+                oilVolume: { label: "Total Oil Volume (excluding OLTC)", unit: "Litres", index: 1 },
+                oilHeightBase: { label: "Oil Column Height: Cons. Level to Tank Base (H_Base)", unit: "meters", index: 2 },
+                oilHeightPRV: { label: "Oil Column Height: Cons. Level to PRV Location (H_PRV)", unit: "meters", index: 3 },
+                oilHeightPRVBase: { label: "Oil Column Height: PRV Location to Tank Base (H_PRV_Base)", unit: "meters", index: 4 },
+                prvOperatingPressure: { label: "PRV Operating Pressure Setting (P_PRV_Op)", unit: "kg/cm²", index: 5 },
+                tankTestPressure: { label: "Tank Design/Test Pressure (P_Tank_Test)", unit: "kg/cm²", index: 6 },
+                litresPerPRV: { label: "PRV Quantity Rule (Volume per PRV)", unit: "Litres", index: 7 },
+                minimumPRVs: { label: "PRV Quantity Rule (Minimum Required)", unit: "Nos.", index: 8, integer: true },
+            };
+
+            const [formData, setFormData] = React.useState({
+                oilVolume: '',
+                oilHeightBase: '',
+                oilHeightPRV: '',
+                oilHeightPRVBase: '',
+                prvOperatingPressure: '',
+                tankTestPressure: '',
+                litresPerPRV: '30000',
+                minimumPRVs: '2', 
+            });
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (name === 'minimumPRVs') {
+                        if (!Number.isInteger(numValue) || numValue < 1) {
+                            errorMessage = 'Please enter a positive integer.';
+                        }
+                    } else if (isNaN(numValue) || numValue <= 0) {
+                        errorMessage = 'Please enter a valid positive number.';
+                    } else if (name === 'oilHeightBase' && numValue <= parseFloat(formData.oilHeightPRVBase)) {
+                        errorMessage = 'Total height (H_Base) must be greater than PRV base height (H_PRV_Base).';
+                    } else if (name === 'oilHeightPRV' && numValue >= parseFloat(formData.oilHeightBase)) {
+                        errorMessage = 'Cons. Level to PRV (H_PRV) must be less than Cons. Level to Base (H_Base).';
+                    } else {
+                        delete newErrors[name];
+                        return newErrors;
+                    }
+
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+                const numericPositiveKeys = Object.keys(inputFieldsMetadata).filter(key => !inputFieldsMetadata[key].integer);
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (numericPositiveKeys.includes(key) && (isNaN(numValue) || numValue <= 0)) {
+                        newErrors[key] = 'Please enter a valid positive number.';
+                        isValid = false;
+                    } else if (key === 'minimumPRVs' && (!Number.isInteger(numValue) || numValue < 1)) {
+                        newErrors[key] = 'Please enter a positive integer.';
+                        isValid = false;
+                    }
+                    // Cross validation checks (must parse values again if validation is run standalone)
+                    const oilHeightBaseVal = parseFloat(formData.oilHeightBase);
+                    const oilHeightPRVBaseVal = parseFloat(formData.oilHeightPRVBase);
+                    const oilHeightPRVVal = parseFloat(formData.oilHeightPRV);
+
+                    if (key === 'oilHeightBase' && oilHeightBaseVal <= oilHeightPRVBaseVal) {
+                        newErrors[key] = 'Total height (H_Base) must be greater than PRV base height (H_PRV_Base).';
+                        isValid = false;
+                    }
+                    if (key === 'oilHeightPRV' && oilHeightPRVVal >= oilHeightBaseVal) {
+                        newErrors[key] = 'Cons. Level to PRV (H_PRV) must be less than Cons. Level to Base (H_Base).';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculatePRV = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                // --- Get User Inputs ---
+                const oilVolume = parseFloat(formData.oilVolume);
+                const oilHeightBase = parseFloat(formData.oilHeightBase);
+                const oilHeightPRV = parseFloat(formData.oilHeightPRV);
+                const oilHeightPRVBase = parseFloat(formData.oilHeightPRVBase);
+                const prvOperatingPressure_kg_cm2 = parseFloat(formData.prvOperatingPressure);
+                const tankTestPressure_kg_cm2 = parseFloat(formData.tankTestPressure);
+                const litresPerPRV = parseFloat(formData.litresPerPRV);
+                const minimumPRVs = parseInt(formData.minimumPRVs);
+
+                // --- Constants ---
+                const SPECIFIC_GRAVITY_OIL = 0.89; 
+                const KN_M2_TO_KG_CM2 = 1 / 98.0665; 
+                const WATER_COLUMN_TO_KN_M2 = 9.80665; 
+                const KG_CM2_TO_PSI = 14.2233; 
+                const CBIP_EXTRA_PRESSURE_KN_M2 = 35; 
+
+                // --- Calculations ---
+                
+                // Normal Pressure at Base
+                const normalPressureAtBase_m_water = oilHeightBase * SPECIFIC_GRAVITY_OIL;
+                const normalPressureAtBase_kN_m2 = normalPressureAtBase_m_water * WATER_COLUMN_TO_KN_M2;
+                const normalPressureAtBase_kg_cm2 = normalPressureAtBase_kN_m2 * KN_M2_TO_KG_CM2;
+
+                // Required Tank Withstand Pressure (CBIP)
+                const requiredTankPressure_kN_m2 = normalPressureAtBase_kN_m2 + CBIP_EXTRA_PRESSURE_KN_M2;
+                const requiredTankPressure_kg_cm2 = requiredTankPressure_kN_m2 * KN_M2_TO_KG_CM2;
+                const requiredTankPressure_psi = requiredTankPressure_kg_cm2 * KG_CM2_TO_PSI;
+
+                // Normal Pressure at PRV Location (to check inadvertent operation)
+                const normalPressureAtPRV_m_water = oilHeightPRV * SPECIFIC_GRAVITY_OIL;
+                const normalPressureAtPRV_kN_m2 = normalPressureAtPRV_m_water * WATER_COLUMN_TO_KN_M2;
+                const normalPressureAtPRV_kg_cm2 = normalPressureAtPRV_kN_m2 * KN_M2_TO_KG_CM2;
+
+                // Pressure at Base when PRV operates
+                const headBelowPRV_m_water = oilHeightPRVBase * SPECIFIC_GRAVITY_OIL;
+                const headBelowPRV_kg_cm2 = headBelowPRV_m_water * KN_M2_TO_KG_CM2 * WATER_COLUMN_TO_KN_M2;
+                const pressureAtBaseWhenPRVOperates_kg_cm2 = prvOperatingPressure_kg_cm2 + headBelowPRV_kg_cm2;
+
+                // PRV Quantity
+                const theoreticalPRVs = oilVolume / litresPerPRV;
+                const requiredPRVs = Math.max(minimumPRVs, Math.ceil(theoreticalPRVs));
+
+                // --- Result Comparisons ---
+                const tankStrengthCheck = tankTestPressure_kg_cm2 >= requiredTankPressure_kg_cm2;
+                const prvOperationSafetyCheck = tankTestPressure_kg_cm2 >= pressureAtBaseWhenPRVOperates_kg_cm2;
+                const normalOperationCheck = prvOperatingPressure_kg_cm2 > normalPressureAtPRV_kg_cm2;
+
+                // --- Store results in report state ---
+                setReport({
+                    oilVolume, oilHeightBase, oilHeightPRV, oilHeightPRVBase, prvOperatingPressure_kg_cm2, tankTestPressure_kg_cm2, litresPerPRV, minimumPRVs,
+                    normalPressureAtBase_kg_cm2, normalPressureAtBase_kN_m2, requiredTankPressure_kg_cm2, requiredTankPressure_kN_m2, requiredTankPressure_psi,
+                    pressureAtBaseWhenPRVOperates_kg_cm2, normalPressureAtPRV_kg_cm2, theoreticalPRVs, requiredPRVs,
+                    tankStrengthCheck, prvOperationSafetyCheck, normalOperationCheck
+                });
+            };
+
+            // Helper to render input rows in the table (for input form)
+            const renderInputRow = (label, name, placeholder, unit, index) => (
+                <tr key={name}>
+                    <td className="border border-gray-300 p-3 text-center">{index}</td>
+                    <td className="border border-gray-300 p-3 font-semibold">{label} <span className="text-red-600">*</span></td>
+                    <td className="border border-gray-300 p-3">
+                        <div className="flex items-center">
+                            <input
+                                type="number"
+                                name={name}
+                                value={formData[name]}
+                                onChange={handleInputChange}
+                                className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                step={name === 'minimumPRVs' ? "1" : "any"}
+                                min={name === 'minimumPRVs' ? "1" : "0"}
+                                placeholder={placeholder}
+                                aria-label={label}
+                            />
+                            {unit && <span className="ml-2 whitespace-nowrap">{unit}</span>}
+                        </div>
+                        {errors[name] && <div className="error-message">{errors[name]}</div>}
+                    </td>
+                </tr>
+            );
+
+            // Helper to render input rows in the table (for report output)
+            const renderReportInputRow = (name, value) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center">{meta.index}</td>
+                        <td className="w-4/5 border p-2 font-medium">{meta.label}</td>
+                        <td className="w-1/5 border p-2"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+
+            return (
+                <div className="container mx-auto p-4 max-w-4xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">Transformer PRV Calculation</h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">PRV Calculation Inputs (Based on Transformer Data)</h2>
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-8">
+                            <thead><tr className="bg-blue-100"><th className="border border-gray-300 p-3 w-16">Sr. No.</th><th className="border border-gray-300 p-3">Description</th><th className="border border-gray-300 p-3">Enter Value</th></tr></thead>
+                            <tbody>
+                                {renderInputRow(inputFieldsMetadata.oilVolume.label, "oilVolume", "e.g., 45500", inputFieldsMetadata.oilVolume.unit, inputFieldsMetadata.oilVolume.index)}
+                                {renderInputRow(inputFieldsMetadata.oilHeightBase.label, "oilHeightBase", "e.g., 6.093", inputFieldsMetadata.oilHeightBase.unit, inputFieldsMetadata.oilHeightBase.index)}
+                                {renderInputRow(inputFieldsMetadata.oilHeightPRV.label, "oilHeightPRV", "e.g., 2.223", inputFieldsMetadata.oilHeightPRV.unit, inputFieldsMetadata.oilHeightPRV.index)}
+                                {renderInputRow(inputFieldsMetadata.oilHeightPRVBase.label, "oilHeightPRVBase", "e.g., 3.87", inputFieldsMetadata.oilHeightPRVBase.unit, inputFieldsMetadata.oilHeightPRVBase.index)}
+                                {renderInputRow(inputFieldsMetadata.prvOperatingPressure.label, "prvOperatingPressure", "e.g., 0.49", inputFieldsMetadata.prvOperatingPressure.unit, inputFieldsMetadata.prvOperatingPressure.index)}
+                                {renderInputRow(inputFieldsMetadata.tankTestPressure.label, "tankTestPressure", "e.g., 1.0", inputFieldsMetadata.tankTestPressure.unit, inputFieldsMetadata.tankTestPressure.index)}
+                                {renderInputRow(inputFieldsMetadata.litresPerPRV.label, "litresPerPRV", "e.g., 30000", inputFieldsMetadata.litresPerPRV.unit, inputFieldsMetadata.litresPerPRV.index)}
+                                {renderInputRow(inputFieldsMetadata.minimumPRVs.label, "minimumPRVs", "e.g., 2", inputFieldsMetadata.minimumPRVs.unit, inputFieldsMetadata.minimumPRVs.index)}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                               Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculatePRV}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* FIX 3: Changed the ID to 'print-wrapper' and wrapped the report content inside */}
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">PRV Calculation Report</h2>
+                            </div>
+
+                            {/* --- NEW SECTION: INPUT PARAMETERS --- */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters</h3>
+                                <table className="w-full text-sm border-collapse input-param-table">
+                                    <thead><tr className="bg-blue-100"><th>Sr. No.</th><th>Description</th><th>Value</th></tr></thead>
+                                    <tbody>
+                                        {renderReportInputRow("oilVolume", report.oilVolume)}
+                                        {renderReportInputRow("oilHeightBase", report.oilHeightBase)}
+                                        {renderReportInputRow("oilHeightPRV", report.oilHeightPRV)}
+                                        {renderReportInputRow("oilHeightPRVBase", report.oilHeightPRVBase)}
+                                        {renderReportInputRow("prvOperatingPressure", report.prvOperatingPressure_kg_cm2)}
+                                        {renderReportInputRow("tankTestPressure", report.tankTestPressure_kg_cm2)}
+                                        {renderReportInputRow("litresPerPRV", report.litresPerPRV)}
+                                        {renderReportInputRow("minimumPRVs", report.minimumPRVs)}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* --- SECTION 2: CALCULATION RESULTS (Pressure) --- */} 
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Pressure Validation (Assumed SG of Oil = 0.89)</h3>
+                                <table className="w-full text-sm mb-4">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Normal Oil Pressure at Tank Base (P_Normal_Base):</td>
+                                            <td className="py-1"><span className="highlight">{report.normalPressureAtBase_kg_cm2.toFixed(3)} kg/cm²</span> ({report.normalPressureAtBase_kN_m2.toFixed(2)} kN/m²)</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Required Tank Withstand Pressure (CBIP = P_Normal_Base + 35 kN/m²):</td>
+                                            <td className="py-1"><span className="highlight">{report.requiredTankPressure_kg_cm2.toFixed(3)} kg/cm²</span> ({report.requiredTankPressure_kN_m2.toFixed(2)} kN/m² $\approx$ {report.requiredTankPressure_psi.toFixed(3)} PSI)</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Tank Design/Test Pressure:</td>
+                                            <td className="py-1"><span className="highlight">{report.tankTestPressure_kg_cm2.toFixed(3)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Tank Strength Check (P_Test $\ge$ P_Required):</td>
+                                            <td className="py-1">
+                                                {report.tankStrengthCheck
+                                                    ? <span className="result-ok">Parameter surpassed</span>
+                                                    : <span className="result-fail">Parameter not surpassed(P_Test &lt; P_Required)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr><td colSpan="2" className="py-2"><hr className="border-t border-gray-200"/></td></tr> {/* Separator */}
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Normal Oil Pressure at PRV Location (P_Normal_PRV):</td>
+                                            <td className="py-1"><span className="highlight">{report.normalPressureAtPRV_kg_cm2.toFixed(3)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">PRV Operating Pressure Setting (P_PRV_Op):</td>
+                                            <td className="py-1"><span className="highlight">{report.prvOperatingPressure_kg_cm2.toFixed(3)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Normal Operation Check (P_PRV_Op &gt; P_Normal_PRV):</td>
+                                            <td className="py-1">{report.normalOperationCheck ? <><span className="result-ok">Parameter surpassed</span><span> - Valve should not operate normally.</span></> : <><span className="result-fail">Parameter not surpassed</span><span> - Valve might operate under normal conditions!</span></>}</td>
+                                        </tr>
+                                        <tr><td colSpan="2" className="py-2"><hr className="border-t border-gray-200"/></td></tr> {/* Separator */}
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Calculated Pressure at Tank Base when PRV Operates:</td>
+                                            <td className="py-1"><span className="highlight">{report.pressureAtBaseWhenPRVOperates_kg_cm2.toFixed(3)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">PRV Operation Safety Check (P_Test $\ge$ P_Base_PRV_Op):</td>
+                                            <td className="py-1">
+                                                {report.prvOperationSafetyCheck ? <><span className="result-ok">Parameter surpassed</span><span> - Tank should withstand PRV operation.</span></> : <><span className="result-fail">Parameter not surpassed</span><span> - Tank might fail when PRV operates!</span></>}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* --- SECTION 3: QUANTITY CALCULATION --- */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. PRV Quantity Calculation</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-1/2">Total Transformer Oil Volume:</td>
+                                            <td className="py-1"><span className="highlight">{report.oilVolume} Litres</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Rule (Volume per PRV, Min. Nos.):</td>
+                                            <td className="py-1">1 PRV per <span className="highlight">{report.litresPerPRV} Litres</span>, Minimum <span className="highlight">{report.minimumPRVs}</span> Nos.</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Theoretical PRVs required (based on volume):</td>
+                                            <td className="py-1">{report.theoreticalPRVs.toFixed(2)}</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Final Number of PRVs Required:</td>
+                                            <td className="py-1"><span className="highlight text-xl text-green-700">{report.requiredPRVs} Nos.</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

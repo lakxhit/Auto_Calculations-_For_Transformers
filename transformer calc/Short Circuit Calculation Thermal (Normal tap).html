@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Thermal SC Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Screen Styles */
+        #print-wrapper {
+            display: none;
+        }
+
+        /* Print Styles */
+        @media print {
+            body > *:not(#print-wrapper) {
+                visibility: hidden !important;
+                display: none !important;
+            }
+            #print-wrapper {
+                display: block !important;
+                visibility: visible !important;
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                padding: 20px;
+                margin: 0;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper * {
+                visibility: visible !important;
+                color: black !important;
+                background-color: transparent !important;
+            }
+            #print-wrapper .print-button {
+                display: none !important;
+            }
+            #print-wrapper .highlight {
+                font-weight: bold;
+                color: black !important;
+            }
+            #print-wrapper .result-ok {
+                color: green !important;
+            }
+            #print-wrapper .result-fail {
+                color: red !important;
+            }
+            #print-wrapper .bg-blue-100 {
+                background-color: transparent !important;
+            }
+            #print-wrapper table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            #print-wrapper td,
+            #print-wrapper th {
+                border: 1px solid #000;
+                padding: 6px;
+            }
+        }
+
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header {
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+            }
+            .logo-header img {
+                margin-right: 0;
+                margin-bottom: 1rem;
+            }
+            td, th {
+                padding: 8px;
+            }
+        }
+        .input-error {
+            border-color: red;
+        }
+        .error-message {
+            color: red;
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+        .result-ok {
+            color: #16a34a;
+            font-weight: bold;
+        }
+        .result-fail {
+            color: #dc2626;
+            font-weight: bold;
+        }
+        .highlight {
+            font-weight: bold;
+            color: #1e40af;
+        }
+        .report-section-internal {
+            margin-bottom: 1.25rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px dashed #d1d5db;
+        }
+        .report-section-internal:last-child {
+            border-bottom: none;
+        }
+        .input-param-table td {
+            padding: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+    <div id="print-wrapper"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const printWrapperElement = document.getElementById('print-wrapper');
+        const printRoot = ReactDOM.createRoot(printWrapperElement);
+
+        function ReportComponent({ report, inputFieldsMetadata, handleDownloadPDF }) {
+            const renderReportInputRow = (name, value) => {
+                const meta = inputFieldsMetadata[name];
+                if (!meta) return null;
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center">{meta.index}</td>
+                        <td className="w-4/5 border p-2 font-medium">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-right"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            if (!report) return null;
+
+            return (
+                <div className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                    <div className="relative mb-6">
+                        <div className="flex justify-center">
+                            <img src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w" alt="Mahati Logo" className="h-16 max-w-full object-contain mb-2" />
+                        </div>
+                        <h2 className="text-xl font-bold mt-2 mb-6 text-center text-blue-700">Thermal Short Circuit Calculation Report (IS 2026)</h2>
+                    </div>
+
+                    <div className="report-section-internal">
+                        <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters</h3>
+                        <table className="w-full text-sm border-collapse input-param-table">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border p-2 text-center">Sr. No.</th>
+                                    <th className="border p-2 text-left">Description</th>
+                                    <th className="border p-2 text-right">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.entries({
+                                    initialTemp: report.initialTemp_C.toFixed(1),
+                                    jHv: report.jHv_A_mm2,
+                                    jIv: report.jIv_A_mm2,
+                                    duration: report.duration_s
+                                }).map(([name, value]) => renderReportInputRow(name, value))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="report-section-internal">
+                        <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Thermal Withstand Check</h3>
+                        <p className="text-sm mb-4">Formula Used: θ₁ = θ₀ + (2 × (θ₀ + 235)) / ( (106000 / (J² × t)) - 1 )</p>
+                        <table className="w-full text-sm mb-6">
+                            <tbody>
+                                <tr>
+                                    <td className="py-1 pr-2 font-medium w-3/5">Max Permissible Temperature (θ_max):</td>
+                                    <td className="py-1"><span className="highlight">{report.MAX_PERMISSIBLE_TEMP} °C</span></td>
+                                </tr>
+                                <tr><td colSpan="2" className="py-2"><hr className="border-t border-dashed border-gray-300"/></td></tr>
+                                <tr>
+                                    <td className="py-1 pr-2 font-medium">Calculated Final Temperature (θ_1) - HV:</td>
+                                    <td className="py-1">
+                                        {report.thermalErrorHv
+                                            ? <span className="text-red-600 font-bold">{report.thermalErrorHv}</span>
+                                            : <span className="highlight">{report.finalTempHv_C.toFixed(2)} °C</span>
+                                        }
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td className="py-1 pr-2 font-medium">Thermal Withstand Check - HV (θ_1 ≤ θ_max):</td>
+                                    <td className="py-1">
+                                        {report.thermalErrorHv
+                                            ? <span className="result-fail">Error</span>
+                                            : report.thermalCheckHv
+                                                ? <span className="result-ok">Parameter surpassed(Calculated ≤ {report.MAX_PERMISSIBLE_TEMP}°C)</span>
+                                                : <span className="result-fail">Parameter not surpassed(Calculated > {report.MAX_PERMISSIBLE_TEMP}°C)</span>
+                                        }
+                                    </td>
+                                </tr>
+                                <tr><td colSpan="2" className="py-2"><hr className="border-t border-dashed border-gray-300"/></td></tr>
+                                <tr>
+                                    <td className="py-1 pr-2 font-medium">Calculated Final Temperature (θ_1) - IV:</td>
+                                    <td className="py-1">
+                                        {report.thermalErrorIv
+                                            ? <span className="text-red-600 font-bold">{report.thermalErrorIv}</span>
+                                            : <span className="highlight">{report.finalTempIv_C.toFixed(2)} °C</span>
+                                        }
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td className="py-1 pr-2 font-medium">Thermal Withstand Check - IV (θ_1 ≤ θ_max):</td>
+                                    <td className="py-1">
+                                        {report.thermalErrorIv
+                                            ? <span className="result-fail">Error</span>
+                                            : report.thermalCheckIv
+                                                ? <span className="result-ok">Parameter surpassed(Calculated ≤ {report.MAX_PERMISSIBLE_TEMP}°C)</span>
+                                                : <span className="result-fail">Parameter not surpassed(Calculated > {report.MAX_PERMISSIBLE_TEMP}°C)</span>
+                                        }
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="mt-6 flex justify-center print-button">
+                        <button
+                            onClick={handleDownloadPDF}
+                            className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                        >
+                            Print Full Report
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const inputFieldsMetadata = {
+                initialTemp: { label: "Initial Winding Temperature (θ₀)", unit: "°C", index: 1 },
+                jHv: { label: "SC Current Density (J) - HV Winding", unit: "A/mm²", index: 2 },
+                jIv: { label: "SC Current Density (J) - IV Winding", unit: "A/mm²", index: 3 },
+                duration: { label: "Short Circuit Duration (t)", unit: "seconds", index: 4 }
+            };
+
+            const [formData, setFormData] = React.useState({
+                initialTemp: '',
+                jHv: '',
+                jIv: '',
+                duration: ''
+            });
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData((prev) => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (isNaN(numValue) || numValue <= 0) {
+                        errorMessage = 'Please enter a valid positive number.';
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+                const numericPositiveKeys = ['initialTemp', 'jHv', 'jIv', 'duration'];
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (numericPositiveKeys.includes(key) && (isNaN(numValue) || numValue <= 0)) {
+                        newErrors[key] = 'Please enter a valid positive number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid;
+            };
+
+            const handleDownloadPDF = () => {
+                printRoot.render(
+                    <ReportComponent 
+                        report={report} 
+                        inputFieldsMetadata={inputFieldsMetadata} 
+                        handleDownloadPDF={() => window.print()}
+                    />
+                );
+                setTimeout(() => window.print(), 80);
+            };
+
+            const calculateThermalSC = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    try { printRoot.unmount(); } catch(e) {}
+                    return;
+                }
+
+                setErrors({});
+
+                const initialTemp_C = parseFloat(formData.initialTemp);
+                const jHv_A_mm2 = parseFloat(formData.jHv);
+                const jIv_A_mm2 = parseFloat(formData.jIv);
+                const duration_s = parseFloat(formData.duration);
+                const MAX_PERMISSIBLE_TEMP = 250;
+
+                const calculateFinalTemp = (initialTemp, currentDensity, time) => {
+                    if (currentDensity <= 0 || time <= 0) return NaN;
+                    const denominatorTerm = 106000 / (currentDensity * currentDensity * time);
+                    if (denominatorTerm <= 1) return Infinity;
+                    return initialTemp + (2 * (initialTemp + 235)) / (denominatorTerm - 1);
+                };
+
+                const finalTempHv_C = calculateFinalTemp(initialTemp_C, jHv_A_mm2, duration_s);
+                const finalTempIv_C = calculateFinalTemp(initialTemp_C, jIv_A_mm2, duration_s);
+
+                const thermalCheckHv = finalTempHv_C <= MAX_PERMISSIBLE_TEMP;
+                const thermalCheckIv = finalTempIv_C <= MAX_PERMISSIBLE_TEMP;
+                const thermalErrorHv = !isFinite(finalTempHv_C) ? "Calculation Error (Check Inputs)" : null;
+                const thermalErrorIv = !isFinite(finalTempIv_C) ? "Calculation Error (Check Inputs)" : null;
+
+                const reportData = {
+                    initialTemp_C,
+                    jHv_A_mm2,
+                    jIv_A_mm2,
+                    duration_s,
+                    MAX_PERMISSIBLE_TEMP,
+                    finalTempHv_C,
+                    finalTempIv_C,
+                    thermalCheckHv,
+                    thermalCheckIv,
+                    thermalErrorHv,
+                    thermalErrorIv,
+                };
+                setReport(reportData);
+            };
+
+            const renderInputRow = (label, name, placeholder, unit, index) => (
+                <tr key={name}>
+                    <td className="border border-gray-300 p-3 text-center">{index}</td>
+                    <td className="border border-gray-300 p-3 font-semibold">{label} <span className="text-red-600">*</span></td>
+                    <td className="border border-gray-300 p-3">
+                        <div className="flex flex-col">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step="any"
+                                    placeholder={placeholder}
+                                    min="0"
+                                    aria-label={label}
+                                    aria-describedby={errors[name] ? `error-${name}` : undefined}
+                                />
+                                {unit && <span className="ml-2 whitespace-nowrap">{unit}</span>}
+                            </div>
+                            {errors[name] && <div id={`error-${name}`} className="error-message">{errors[name]}</div>}
+                        </div>
+                    </td>
+                </tr>
+            );
+
+            return (
+                <div className="container mx-auto p-4 max-w-4xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w" alt="Mahati Logo" className="h-20 max-w-full object-contain" />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">Transformer Thermal SC Calculation</h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">Thermal Short Circuit Calculation Inputs (IS 2026)</h2>
+                        <table className="w-full border-collapse border border-gray-300 text-sm">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {renderInputRow(inputFieldsMetadata.initialTemp.label, "initialTemp", "e.g., 95", inputFieldsMetadata.initialTemp.unit, inputFieldsMetadata.initialTemp.index)}
+                                {renderInputRow(inputFieldsMetadata.jHv.label, "jHv", "e.g., 15.36", inputFieldsMetadata.jHv.unit, inputFieldsMetadata.jHv.index)}
+                                {renderInputRow(inputFieldsMetadata.jIv.label, "jIv", "e.g., 19.11", inputFieldsMetadata.jIv.unit, inputFieldsMetadata.jIv.index)}
+                                {renderInputRow(inputFieldsMetadata.duration.label, "duration", "e.g., 3", inputFieldsMetadata.duration.unit, inputFieldsMetadata.duration.index)}
+                            </tbody>
+                        </table>
+
+                        {Object.keys(errors).length > 0 && (
+                            <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                            </div>
+                        )}
+                        <div className="mt-8 flex justify-center">
+                            <button
+                                onClick={calculateThermalSC}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Thermal SC Report
+                            </button>
+                        </div>
+                    </div>
+
+                    <ReportComponent 
+                        report={report} 
+                        inputFieldsMetadata={inputFieldsMetadata} 
+                        handleDownloadPDF={handleDownloadPDF} 
+                    />
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

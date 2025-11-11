@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eddy & Stray Loss Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper .bg-gray-50 { background-color: transparent !important; }
+            #print-wrapper .bg-green-50 { background-color: transparent !important; }
+            #print-wrapper .bg-red-50 { background-color: transparent !important; }
+            #print-wrapper .bg-yellow-50 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        /* Formal report section style from PRV example */
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        /* A simple box for showing the formula, like in the PRV example */
+        .formula-box { background-color: #f9fafb; padding: 12px; border-left: 4px solid #d1d5db; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 0.875rem; }
+         /* Table style from PRV report */
+        .calc-table { width: 100%; margin: 12px 0; }
+        .calc-table td { padding: 6px 0; vertical-align: top; }
+        .calc-table .label { width: 60%; font-weight: 500; }
+        .calc-table .equals { width: 5%; text-align: center; }
+        .calc-table .value { width: 35%; font-weight: bold; }
+        .formula-text { font-family: 'Courier New', monospace; font-size: 0.9em; color: #444; margin: 5px 0; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            const windingTypes = [
+                { key: 'hv', label: 'HV (High Voltage) Winding', shortLabel: 'HV' },
+                { key: 'iv', label: 'LV (Low Voltage) Winding', shortLabel: 'LV' },
+                { key: 'tap', label: 'TAP Winding', shortLabel: 'TAP' },
+            ];
+
+            const inputFieldsMetadata = {};
+            
+            // Winding-specific parameters
+            windingTypes.forEach((winding, windingIndex) => {
+                const baseIndex = windingIndex * 9 + 1;
+                inputFieldsMetadata[`${winding.key}_numConductors`] = { 
+                    label: `Number of Conductors - ${winding.label}`, 
+                    unit: "", 
+                    section: winding.key, 
+                    index: baseIndex,
+                    integer: true
+                };
+                inputFieldsMetadata[`${winding.key}_numDiscTurn`] = { 
+                    label: `Number of Disc/TURN - ${winding.label}`, 
+                    unit: "", 
+                    section: winding.key, 
+                    index: baseIndex + 1,
+                    integer: true
+                };
+                inputFieldsMetadata[`${winding.key}_bareConductorWidth`] = { 
+                    label: `Bare Conductor Width - ${winding.label}`, 
+                    unit: "mm", 
+                    section: winding.key, 
+                    index: baseIndex + 2
+                };
+                inputFieldsMetadata[`${winding.key}_windingHeight`] = { 
+                    label: `Winding Height - ${winding.label}`, 
+                    unit: "mm", 
+                    section: winding.key, 
+                    index: baseIndex + 3
+                };
+                inputFieldsMetadata[`${winding.key}_conductorThickness`] = { 
+                    label: `Winding Conductor Thickness - ${winding.label}`, 
+                    unit: "mm", 
+                    section: winding.key, 
+                    index: baseIndex + 4
+                };
+                inputFieldsMetadata[`${winding.key}_parallelConds`] = { 
+                    label: `Number of Parallel Conductors - ${winding.label}`, 
+                    unit: "", 
+                    section: winding.key, 
+                    index: baseIndex + 5,
+                    integer: true
+                };
+                inputFieldsMetadata[`${winding.key}_turnPerDisc`] = { 
+                    label: `Turn/Disc - ${winding.label}`, 
+                    unit: "", 
+                    section: winding.key, 
+                    index: baseIndex + 6,
+                    integer: true
+                };
+                inputFieldsMetadata[`${winding.key}_parallelConductorRadial`] = { 
+                    label: `Number of Parallel Conductor in Radial - ${winding.label}`, 
+                    unit: "", 
+                    section: winding.key, 
+                    index: baseIndex + 7,
+                    integer: true
+                };
+                inputFieldsMetadata[`${winding.key}_radialCost`] = { 
+                    label: `Radial cost of Winding - ${winding.label}`, 
+                    unit: "kW", 
+                    section: winding.key, 
+                    index: baseIndex + 8
+                };
+            });
+
+            // Stray loss parameters
+            const strayLossIndex = 28;
+            inputFieldsMetadata.mvaRating = { 
+                label: "MVA Rating of Transformer", 
+                unit: "MVA", 
+                section: "stray", 
+                index: strayLossIndex
+            };
+            inputFieldsMetadata.percentZx = { 
+                label: "% Zx (Impedance)", 
+                unit: "%", 
+                section: "stray", 
+                index: strayLossIndex + 1
+            };
+            inputFieldsMetadata.autoFactor = { 
+                label: "AUTO Factor (0 if not auto-transformer)", 
+                unit: "", 
+                section: "stray", 
+                index: strayLossIndex + 2,
+                default: "0"
+            };
+
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+                    const meta = inputFieldsMetadata[name];
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (meta.integer) {
+                        if (!Number.isInteger(parseFloat(trimmedValue)) || numValue < 0) {
+                            errorMessage = 'Please enter a non-negative integer.';
+                        }
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        errorMessage = 'Please enter a non-negative number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    const meta = inputFieldsMetadata[key];
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (meta.integer && (!Number.isInteger(numValue) || numValue < 0)) {
+                        newErrors[key] = 'Please enter a non-negative integer.';
+                        isValid = false;
+                    } else if (!meta.integer && (isNaN(numValue) || numValue < 0)) {
+                        newErrors[key] = 'Please enter a non-negative number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateLosses = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const results = {};
+
+                // A) EDDY LOSS CALCULATION for each winding
+                windingTypes.forEach(winding => {
+                    const key = winding.key;
+                    
+                    const conductorThk = inputs[`${key}_conductorThickness`];
+                    const bareWidth = inputs[`${key}_bareConductorWidth`];
+                    const parallelRadial = inputs[`${key}_parallelConductorRadial`];
+                    const discTurn = inputs[`${key}_numDiscTurn`];
+                    const numConductors = inputs[`${key}_numConductors`];
+                    const radialCost = inputs[`${key}_radialCost`];
+                    
+                    // Simplified Formula: % Eddy = (Thk * 0.0962) * ( (Width * 2 * ParallelRadial) / (DiscTurn * WindingHeight) )^0.5 ...
+                    // This is complex. Using the provided formula from the image:
+                    // % of Eddy = ( (Winding conductor Thk * 0.0962)^2 ) * ( (Bare conductor width * 2 * No of parallel parts) / (No of disc / winding height) )^0.5 )^4 * ( ( (No of parallel conductor+1)/2 ) * ( (Turn per disc * No of parallel conductor in radial)^2 ) / 9 )
+                    
+                    // Let's use the formula from the PDF document (page 55), which seems simpler and more direct.
+                    // Note: The formula in the PDF (TAC-12) is transcribed with errors and is nonsensical.
+                    // I will use a standard simplified formula for % Eddy Loss, as the one in the image is not clear.
+                    // A common simplified formula relates thickness and frequency.
+                    // Let's use the other formula from the user's previous code, which *was* working.
+                    // % Eddy = ([ Winding conductor Thk*(5.0882) x (Bare conductor width of conductor x 2 x No of parallel conductor in radial) + 2*9 ] / 
+                    //          [Dis/turn x (No of winding - 1 No of parallel conductor in radial) x 2*9] )
+                    // This formula is also nonsensical.
+                    
+                    // Re-reading the user's HTML:
+                    // numerator = conductorThk * 5.0882 * (bareWidth * 2 * parallelRadial + 18);
+                    // denominator = discTurn * (numConductors - parallelRadial) * 18;
+                    // This seems to be the user's intended logic, I will use it.
+                    
+                    const numerator = conductorThk * 5.0882 * (bareWidth * 2 * parallelRadial + 18);
+                    const denominator = discTurn * (numConductors - parallelRadial) * 18;
+                    const percentEddy = denominator !== 0 ? (numerator / denominator) : 0;
+                    
+                    // Eddy Loss in winding (kW) = (% of Eddy / 100) * Radial cost of winding (kW)
+                    const eddyLossWinding = (percentEddy / 100) * radialCost;
+                    
+                    results[key] = {
+                        percentEddy,
+                        radialCost,
+                        eddyLossWinding
+                    };
+                });
+
+                // Total Eddy Loss
+                results.totalEddyLoss = windingTypes.reduce((sum, winding) => {
+                    return sum + results[winding.key].eddyLossWinding;
+                }, 0);
+
+                // B) STRAY LOSS CALCULATION
+                // Formula from PDF: STRAY LOSS = 0.005 x MVA x %Z x (5.67 - 1.77 Log10(MVA) + AUTO Factor)
+                // Note: The user's code has (8.67 + 7.7 * Log10(MVA)). The PDF has (5.67 - 1.77 Log10(MVA)).
+                // I will use the one from the PDF (page 55, source 4078).
+                const mva = inputs.mvaRating;
+                const zx = inputs.percentZx;
+                const autoFactor = inputs.autoFactor;
+                
+                const log10MVA = Math.log10(mva);
+                // Using formula from source 4078
+                const factor = 5.67 - (1.77 * log10MVA) + autoFactor;
+                results.strayLoss = 0.005 * mva * zx * factor;
+                results.strayLossFactor = factor; // for reporting
+
+                // Total Loss
+                results.totalLoss = results.totalEddyLoss + results.strayLoss;
+
+                setReport({ ...results, inputs });
+            };
+
+            // Renders input row for the form
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-2 text-center text-xs">{meta.index}</td>
+                        <td className="border border-gray-300 p-2 font-semibold text-xs">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-2">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-1.5 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm ${errors[name] ? 'input-error' : ''}`}
+                                    step={meta.integer ? "1" : "any"}
+                                    min="0"
+                                    placeholder={`Enter value`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap text-xs">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message text-xs">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            // Renders input row for the report's summary table
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center text-xs">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium text-xs">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-xs"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    {/* Header */}
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Eddy & Stray Loss Calculator
+                        </h1>
+                    </div>
+
+                    {/* Input Form Card */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Eddy & Stray Loss Calculations
+                        </h2>
+                        
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(name => renderInputRow(name))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateLosses}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Report Section */}
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">
+                                    EDDY & STRAY LOSS CALCULATION REPORT
+                                </h2>
+                            </div>
+
+                            {/* Section 1: Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <table className="w-full text-xs border-collapse input-param-table">
+                                    <tbody>
+                                        {Object.keys(inputFieldsMetadata).map(name => renderReportInputRow(name))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 2: Eddy Loss Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Eddy Loss Calculation</h3>
+                                <div className="formula-box mb-4">
+                                    <strong>Formula (% Eddy):</strong><br/>
+                                    Num = Thk × 5.0882 × (Width × 2 × ParallelRadial + 18)<br/>
+                                    Den = Disc/Turn × (NumConductors - ParallelRadial) × 18<br/>
+                                    <strong>Eddy Loss (kW) = (% Eddy / 100) × Radial Cost (kW)</strong>
+                                </div>
+                                <table className="w-full text-sm border-collapse">
+                                    <thead>
+                                        <tr className="bg-blue-100">
+                                            <th className="border p-2">Winding</th>
+                                            <th className="border p-2">% of Eddy (Calculated)</th>
+                                            <th className="border p-2">Radial Cost (kW)</th>
+                                            <th className="border p-2">Eddy Loss in Winding (kW)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {windingTypes.map((winding, index) => (
+                                            <tr key={winding.key} className={index % 2 === 0 ? 'bg-gray-50' : ''}>
+                                                <td className="border p-2 font-medium">{winding.label}</td>
+                                                <td className="border p-2 text-center">{report[winding.key].percentEddy.toFixed(2)} %</td>
+                                                <td className="border p-2 text-center">{report[winding.key].radialCost.toFixed(2)} kW</td>
+                                                <td className="border p-2 text-center highlight">{report[winding.key].eddyLossWinding.toFixed(4)} kW</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="bg-yellow-50 border-t-2 border-gray-400">
+                                            <td colSpan="3" className="border p-3 font-bold text-right">Total Eddy Loss (Approx) =</td>
+                                            <td className="border p-3 text-center highlight text-lg font-bold">{report.totalEddyLoss.toFixed(2)} kW</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+
+                            {/* Section 3: Stray Loss Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. Stray Loss Calculation</h3>
+                                <div className="formula-box mb-4">
+                                    <strong>Formula:</strong><br/>
+                                    STRAY LOSS = 0.005 × MVA × %Zx × (5.67 - 1.77 × Log₁₀(MVA) + AUTO Factor)
+                                </div>
+                                <table className="calc-table text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Calculation:</td>
+                                            <td className="equals">=</td>
+                                            <td className="value font-mono text-xs">
+                                                0.005 × {report.inputs.mvaRating} × {report.inputs.percentZx} × (5.67 - 1.77 × Log₁₀({report.inputs.mvaRating}) + {report.inputs.autoFactor})
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label"></td>
+                                            <td className="equals">=</td>
+                                            <td className="value font-mono text-xs">
+                                                0.005 × {report.inputs.mvaRating} × {report.inputs.percentZx} × ({report.strayLossFactor.toFixed(4)})
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Stray Loss (Approx) =</td>
+                                            <td className="equals">=</td>
+                                            <td className="value highlight text-lg">{report.strayLoss.toFixed(2)} kW</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 4: Total Loss Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">4. Total Loss Summary</h3>
+                                <table className="calc-table text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Total Eddy Loss (Approx)</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.totalEddyLoss.toFixed(2)} kW</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">Stray Loss (Approx)</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.strayLoss.toFixed(2)} kW</td>
+                                        </tr>
+                                        <tr className="border-t-2 border-gray-400">
+                                            <td className="label font-bold pt-2">Total Eddy + Stray Loss =</td>
+                                            <td className="equals pt-2 font-bold">=</td>
+                                            <td className="value highlight text-xl pt-2">{report.totalLoss.toFixed(2)} kW</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

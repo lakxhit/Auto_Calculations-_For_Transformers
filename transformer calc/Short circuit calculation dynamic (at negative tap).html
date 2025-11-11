@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Short Circuit Force Withstand Capability - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        .formula-box { background-color: #f0f9ff; padding: 12px; border-left: 4px solid #3b82f6; margin: 12px 0; font-family: 'Courier New', monospace; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            const inputFieldsMetadata = {
+                // Transformer Rating
+                ratedMVA: { label: "Transformer Rated MVA (Sn)", unit: "MVA", section: "rating", index: 1 },
+                voltageHV: { label: "HV Voltage", unit: "kV", section: "rating", index: 2 },
+                voltageIV: { label: "IV Voltage", unit: "kV", section: "rating", index: 3 },
+                
+                // Short Circuit Parameters
+                puImpedance: { label: "P.U. Impedance (ez)", unit: "p.u.", section: "sc", index: 4 },
+                asymmetryFactor: { label: "Asymmetry Factor (K√2)", unit: "", section: "sc", index: 5 },
+                
+                // Winding Data - HV
+                turnsHV: { label: "Number of Turns - HV (N)", unit: "", section: "hv", index: 6, integer: true },
+                phaseCurrentHV: { label: "Rated Phase Current - HV (Iph)", unit: "A", section: "hv", index: 7 },
+                rdcHV: { label: "DC Resistance @ 75°C - HV (Rdc)", unit: "Ω", section: "hv", index: 8 },
+                windingHeightHV: { label: "Winding Height - HV (hw)", unit: "cm", section: "hv", index: 9 },
+                meanDiameterHV: { label: "Mean Diameter - HV (Dmi)", unit: "cm", section: "hv", index: 10 },
+                conductorThicknessHV: { label: "Conductor Thickness - HV (bi)", unit: "cm", section: "hv", index: 11 },
+                currentDensityHV: { label: "Current Density - HV (Jdc)", unit: "A/cm²", section: "hv", index: 12 },
+                spacerAreaHV: { label: "Total Spacer Support Area - HV (Ahv)", unit: "cm²", section: "hv", index: 13 },
+                turnsPerCoilHV: { label: "Turns/coil × Parallel conductors - HV (m)", unit: "", section: "hv", index: 14, integer: true },
+                conductorThicknessBHV: { label: "Conductor Thickness - HV (bo)", unit: "cm", section: "hv", index: 15 },
+                axialShareHV: { label: "Axial Compression Share - HV (Ks)", unit: "%", section: "hv", index: 16 },
+                
+                // Winding Data - IV
+                turnsIV: { label: "Number of Turns - IV (N)", unit: "", section: "iv", index: 17, integer: true },
+                phaseCurrentIV: { label: "Rated Phase Current - IV (Iph)", unit: "A", section: "iv", index: 18 },
+                rdcIV: { label: "DC Resistance @ 75°C - IV (Rdc)", unit: "Ω", section: "iv", index: 19 },
+                windingHeightIV: { label: "Winding Height - IV (hw)", unit: "cm", section: "iv", index: 20 },
+                meanDiameterIV: { label: "Mean Diameter - IV (Dmi)", unit: "cm", section: "iv", index: 21 },
+                conductorThicknessIV: { label: "Conductor Thickness - IV (bi)", unit: "cm", section: "iv", index: 22 },
+                currentDensityIV: { label: "Current Density - IV (Jdc)", unit: "A/cm²", section: "iv", index: 23 },
+                spacerAreaIV: { label: "Total Spacer Support Area - IV (Alv)", unit: "cm²", section: "iv", index: 24 },
+                turnsPerCoilIV: { label: "Turns/coil × Parallel conductors - IV (m)", unit: "", section: "iv", index: 25, integer: true },
+                conductorThicknessBIV: { label: "Conductor Thickness - IV (bo)", unit: "cm", section: "iv", index: 26 },
+                axialShareIV: { label: "Axial Compression Share - IV (Ks)", unit: "%", section: "iv", index: 27 },
+                
+                // Clamping Ring Data
+                clampRingDiameter: { label: "Clamping Ring Mean Diameter (D)", unit: "cm", section: "clamp", index: 28 },
+                clampRingPoints: { label: "Number of Clamping Points (n)", unit: "", section: "clamp", index: 29, integer: true },
+                clampRingWidth: { label: "Clamping Ring Width (br)", unit: "cm", section: "clamp", index: 30 },
+                clampRingThickness: { label: "Clamping Ring Thickness (t)", unit: "cm", section: "clamp", index: 31 },
+                
+                // Auto Transformer Factor
+                autoFactor: { label: "Auto Transformer Factor (AF)", unit: "", section: "other", index: 32 },
+                
+                // Constants (with default values)
+                kCuFactor: { label: "Hoop Stress Factor (Kcu)", unit: "", section: "const", index: 33, default: "0.03" },
+                modulusElasticity: { label: "Modulus of Elasticity (E)", unit: "kg/cm²", section: "const", index: 34, default: "1130000" },
+                maxHoopStress: { label: "Max Permissible Hoop Stress", unit: "kg/cm²", section: "const", index: 35, default: "1250" },
+                maxSpacerStress: { label: "Max Permissible Spacer Stress", unit: "kg/cm²", section: "const", index: 36, default: "500" },
+                maxBendingStress: { label: "Max Permissible Bending Stress", unit: "kg/cm²", section: "const", index: 37, default: "1150" },
+            };
+
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+                    const meta = inputFieldsMetadata[name];
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (meta.integer) {
+                        if (!Number.isInteger(parseFloat(trimmedValue)) || numValue < 1) {
+                            errorMessage = 'Please enter a positive integer.';
+                        }
+                    } else if (isNaN(numValue) || numValue <= 0) {
+                        errorMessage = 'Please enter a valid positive number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    const meta = inputFieldsMetadata[key];
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (meta.integer && (!Number.isInteger(numValue) || numValue < 1)) {
+                        newErrors[key] = 'Please enter a positive integer.';
+                        isValid = false;
+                    } else if (!meta.integer && (isNaN(numValue) || numValue <= 0)) {
+                        newErrors[key] = 'Please enter a valid positive number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateShortCircuit = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                // Parse all inputs
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const {
+                    ratedMVA, voltageHV, voltageIV, puImpedance, asymmetryFactor,
+                    turnsHV, phaseCurrentHV, rdcHV, windingHeightHV, meanDiameterHV, 
+                    conductorThicknessHV, currentDensityHV, spacerAreaHV, turnsPerCoilHV, 
+                    conductorThicknessBHV, axialShareHV,
+                    turnsIV, phaseCurrentIV, rdcIV, windingHeightIV, meanDiameterIV, 
+                    conductorThicknessIV, currentDensityIV, spacerAreaIV, turnsPerCoilIV, 
+                    conductorThicknessBIV, axialShareIV,
+                    clampRingDiameter, clampRingPoints, clampRingWidth, clampRingThickness,
+                    autoFactor, kCuFactor, modulusElasticity, maxHoopStress, 
+                    maxSpacerStress, maxBendingStress
+                } = inputs;
+
+                const results = {};
+
+                // 1. FIRST PEAK VALUE OF SHORT CIRCUIT CURRENT
+                // Isc = (K√2 × Iph) / ez
+                results.iscHV = (asymmetryFactor * phaseCurrentHV) / puImpedance;
+                results.iscIV = (asymmetryFactor * phaseCurrentIV) / puImpedance;
+
+                // Asymmetric Ampere-Turns
+                results.ampTurnsHV = turnsHV * results.iscHV;
+                results.ampTurnsIV = turnsIV * results.iscIV;
+
+                // 2. HOOP STRESS
+                // σ_mean = (Kcu × Iph² × Rdc) / (hw × ez²)
+                results.hoopStressHV = (kCuFactor * Math.pow(phaseCurrentHV, 2) * rdcHV) / 
+                                       (windingHeightHV * Math.pow(puImpedance, 2));
+                results.hoopStressIV = (kCuFactor * Math.pow(phaseCurrentIV, 2) * rdcIV) / 
+                                       (windingHeightIV * Math.pow(puImpedance, 2));
+                
+                results.hoopCheckHV = results.hoopStressHV <= maxHoopStress;
+                results.hoopCheckIV = results.hoopStressIV <= maxHoopStress;
+
+                // 3. RADIAL BURSTING FORCE (Fr = n × i)
+                // Fr = (2π × σ_mean × Iph × N) / Jdc
+                results.radialForceHV = (2 * Math.PI * results.hoopStressHV * phaseCurrentHV * turnsHV) / currentDensityHV;
+                results.radialForceIV = (2 * Math.PI * results.hoopStressIV * phaseCurrentIV * turnsIV) / currentDensityIV;
+
+                // 4. INTERNAL AXIAL COMPRESSION
+                // Sn' = Sn × AF (for auto transformers)
+                const snPrime = ratedMVA * 1000 * autoFactor; // Convert to kVA
+                
+                // Fc = (34 × Sn') / (ez × hw)
+                results.axialCompression = (34 * snPrime) / (puImpedance * windingHeightHV);
+
+                // Axial force on each winding
+                results.axialForceHV = (axialShareHV / 100) * results.axialCompression;
+                results.axialForceIV = (axialShareIV / 100) * results.axialCompression;
+
+                // 5. COMPRESSIVE STRESS ON SPACERS
+                // Phv = Force / Area
+                results.spacerStressHV = results.axialForceHV / spacerAreaHV;
+                results.spacerStressIV = results.axialForceIV / spacerAreaIV;
+                
+                results.spacerCheckHV = results.spacerStressHV <= maxSpacerStress;
+                results.spacerCheckIV = results.spacerStressIV <= maxSpacerStress;
+
+                // 6. AXIAL IMBALANCE FORCE (Resistance to Collapse)
+                // Fcrit = A + B
+                // A = (1.5 × E × m × Iph²) / (bo × Dmi × Jdc × 10⁷)
+                // B = (450 × A_spacer × bo × Jdc) / Iph
+                
+                const fcritA_HV = (1.5 * modulusElasticity * turnsPerCoilHV * Math.pow(phaseCurrentHV, 2)) / 
+                                  (conductorThicknessBHV * meanDiameterHV * currentDensityHV * 1e7);
+                const fcritB_HV = (450 * spacerAreaHV * conductorThicknessBHV * currentDensityHV) / phaseCurrentHV;
+                results.fcritHV = fcritA_HV + fcritB_HV;
+                results.collapseCheckHV = results.fcritHV > results.axialForceHV;
+
+                const fcritA_IV = (1.5 * modulusElasticity * turnsPerCoilIV * Math.pow(phaseCurrentIV, 2)) / 
+                                  (conductorThicknessBIV * meanDiameterIV * currentDensityIV * 1e7);
+                const fcritB_IV = (450 * spacerAreaIV * conductorThicknessBIV * currentDensityIV) / phaseCurrentIV;
+                results.fcritIV = fcritA_IV + fcritB_IV;
+                results.collapseCheckIV = results.fcritIV > results.axialForceIV;
+
+                // 7. BENDING STRESS ON CLAMPING RING
+                // σ_max = (6 × Fc × D) / (n × br × t²)
+                results.bendingStress = (6 * results.axialForceHV * clampRingDiameter) / 
+                                        (clampRingPoints * clampRingWidth * Math.pow(clampRingThickness, 2));
+                results.bendingCheck = results.bendingStress <= maxBendingStress;
+
+                setReport({ ...results, inputs });
+            };
+
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step={meta.integer ? "1" : "any"}
+                                    min={meta.integer ? "1" : "0"}
+                                    placeholder={`Enter ${meta.label}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium">{meta.label}</td>
+                        <td className="w-1/5 border p-2"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            const renderSection = (title, fieldNames) => (
+                <div className="mb-6">
+                    <h3 className="text-md font-bold mb-3 text-gray-700 bg-gray-100 p-2 rounded">{title}</h3>
+                    <table className="w-full border-collapse border border-gray-300 text-sm">
+                        <thead>
+                            <tr className="bg-blue-100">
+                                <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                <th className="border border-gray-300 p-3">Description</th>
+                                <th className="border border-gray-300 p-3">Enter Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {fieldNames.map(name => renderInputRow(name))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+
+            return (
+                <div className="container mx-auto p-4 max-w-6xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Short Circuit Force Withstand Capability Calculator
+                        </h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Short Circuit Calculations
+                        </h2>
+                        
+                        {renderSection("Transformer Rating & Basic Parameters", 
+                            ['ratedMVA', 'voltageHV', 'voltageIV', 'puImpedance', 'asymmetryFactor'])}
+                        
+                        {renderSection("HV Winding Data", 
+                            ['turnsHV', 'phaseCurrentHV', 'rdcHV', 'windingHeightHV', 'meanDiameterHV', 
+                             'conductorThicknessHV', 'currentDensityHV', 'spacerAreaHV', 'turnsPerCoilHV', 
+                             'conductorThicknessBHV', 'axialShareHV'])}
+                        
+                        {renderSection("IV Winding Data", 
+                            ['turnsIV', 'phaseCurrentIV', 'rdcIV', 'windingHeightIV', 'meanDiameterIV', 
+                             'conductorThicknessIV', 'currentDensityIV', 'spacerAreaIV', 'turnsPerCoilIV', 
+                             'conductorThicknessBIV', 'axialShareIV'])}
+                        
+                        {renderSection("Clamping Ring Data", 
+                            ['clampRingDiameter', 'clampRingPoints', 'clampRingWidth', 'clampRingThickness'])}
+                        
+                        {renderSection("Other Parameters & Constants", 
+                            ['autoFactor', 'kCuFactor', 'modulusElasticity', 'maxHoopStress', 
+                             'maxSpacerStress', 'maxBendingStress'])}
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                               Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateShortCircuit}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">
+                                    SHORT CIRCUIT FORCE WITHSTAND CAPABILITY CALCULATION REPORT
+                                </h2>
+                                <p className="text-center text-sm text-gray-600 mb-4">
+                                    Rating: {report.inputs.ratedMVA} MVA, {report.inputs.voltageHV}/{report.inputs.voltageIV} kV
+                                </p>
+                            </div>
+
+                            {/* Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <h4 className="text-md font-semibold mb-2 text-gray-700">Basic Parameters</h4>
+                                        <table className="w-full text-xs border-collapse">
+                                            <tbody>
+                                                {['ratedMVA', 'voltageHV', 'voltageIV', 'puImpedance', 'asymmetryFactor'].map(name => renderReportInputRow(name))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-md font-semibold mb-2 text-gray-700">Clamping & Constants</h4>
+                                        <table className="w-full text-xs border-collapse">
+                                            <tbody>
+                                                {['clampRingDiameter', 'clampRingPoints', 'autoFactor', 'maxHoopStress', 'maxSpacerStress'].map(name => renderReportInputRow(name))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Calculation Results */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">
+                                    2. First Peak Value of Short Circuit Current
+                                </h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: Isc = (K√2 × Iph) / ez
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Peak SC Current (Isc) - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.iscHV.toFixed(2)} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Peak SC Current (Isc) - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.iscIV.toFixed(2)} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Asymmetric Ampere-Turns - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.ampTurnsHV.toLocaleString('en-US', {maximumFractionDigits: 0})}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Asymmetric Ampere-Turns - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.ampTurnsIV.toLocaleString('en-US', {maximumFractionDigits: 0})}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. Hoop Stress Calculation</h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: σ_mean = (Kcu × Iph² × Rdc) / (hw × ez²)
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Hoop Stress (σ_mean) - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.hoopStressHV.toFixed(2)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Hoop Stress Check - HV:</td>
+                                            <td className="py-1">
+                                                {report.hoopCheckHV 
+                                                    ? <span className="result-ok">Parameter surpassed(≤ {report.inputs.maxHoopStress} kg/cm²)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(&gt; {report.inputs.maxHoopStress} kg/cm²)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Hoop Stress (σ_mean) - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.hoopStressIV.toFixed(2)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Hoop Stress Check - IV:</td>
+                                            <td className="py-1">
+                                                {report.hoopCheckIV 
+                                                    ? <span className="result-ok">Parameter surpassed(≤ {report.inputs.maxHoopStress} kg/cm²)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(&gt; {report.inputs.maxHoopStress} kg/cm²)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">4. Radial Bursting Force (Fr = n × i)</h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: Fr = (2π × σ_mean × Iph × N) / Jdc
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Radial Bursting Force - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.radialForceHV.toLocaleString('en-US', {maximumFractionDigits: 0})} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Radial Bursting Force - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.radialForceIV.toLocaleString('en-US', {maximumFractionDigits: 0})} kg</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">5. Internal Axial Compression</h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: Fc = (34 × Sn' × 1000) / (ez × hw), where Sn' = Sn × AF
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Total Internal Axial Compression (Fc):</td>
+                                            <td className="py-1"><span className="highlight">{report.axialCompression.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Axial Force on HV Winding ({report.inputs.axialShareHV}% of Fc):</td>
+                                            <td className="py-1"><span className="highlight">{report.axialForceHV.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Axial Force on IV Winding ({report.inputs.axialShareIV}% of Fc):</td>
+                                            <td className="py-1"><span className="highlight">{report.axialForceIV.toFixed(2)} kg</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">6. Compressive Stress on Spacers</h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: P = Axial Force / Spacer Area
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Compressive Stress on Spacers (Phv) - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.spacerStressHV.toFixed(2)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Spacer Stress Check - HV:</td>
+                                            <td className="py-1">
+                                                {report.spacerCheckHV 
+                                                    ? <span className="result-ok">Parameter surpassed(≤ {report.inputs.maxSpacerStress} kg/cm²)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(&gt; {report.inputs.maxSpacerStress} kg/cm²)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Compressive Stress on Spacers (Plv) - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.spacerStressIV.toFixed(2)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Spacer Stress Check - IV:</td>
+                                            <td className="py-1">
+                                                {report.spacerCheckIV 
+                                                    ? <span className="result-ok">Parameter surpassed(≤ {report.inputs.maxSpacerStress} kg/cm²)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(&gt; {report.inputs.maxSpacerStress} kg/cm²)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">
+                                    7. Axial Imbalance Force - Resistance to Collapse (Fcrit)
+                                </h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: Fcrit = [(1.5 × E × m × Iph²) / (bo × Dmi × Jdc × 10⁷)] + [(450 × A × bo × Jdc) / Iph]
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Resistance to Collapse (Fcrit) - HV:</td>
+                                            <td className="py-1"><span className="highlight">{report.fcritHV.toLocaleString('en-US', {maximumFractionDigits: 0})} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Collapse Check - HV (Fcrit &gt; Axial Force):</td>
+                                            <td className="py-1">
+                                                {report.collapseCheckHV 
+                                                    ? <span className="result-ok">Parameter surpassed(Fcrit &gt; Axial Force)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(Fcrit ≤ Axial Force)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Resistance to Collapse (Fcrit) - IV:</td>
+                                            <td className="py-1"><span className="highlight">{report.fcritIV.toLocaleString('en-US', {maximumFractionDigits: 0})} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Collapse Check - IV (Fcrit &gt; Axial Force):</td>
+                                            <td className="py-1">
+                                                {report.collapseCheckIV 
+                                                    ? <span className="result-ok">Parameter surpassed(Fcrit &gt; Axial Force)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(Fcrit ≤ Axial Force)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">8. Bending Stress on Clamping Ring</h3>
+                                <div className="formula-box text-xs mb-3">
+                                    Formula: σ_max = (6 × Fc_HV × D) / (n × br × t²)
+                                </div>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Bending Stress on Clamping Ring (σ_max):</td>
+                                            <td className="py-1"><span className="highlight">{report.bendingStress.toFixed(2)} kg/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Bending Stress Check:</td>
+                                            <td className="py-1">
+                                                {report.bendingCheck 
+                                                    ? <span className="result-ok">Parameter surpassed(≤ {report.inputs.maxBendingStress} kg/cm²)</span>
+                                                    : <span className="result-fail">Parameter not surpassed(&gt; {report.inputs.maxBendingStress} kg/cm²)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Summary */}
+                            <div className="bg-blue-50 p-4 rounded-lg mt-6">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-700">Overall Compliance Summary</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                                    <div> Hoop Stress HV: {report.hoopCheckHV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Hoop Stress IV: {report.hoopCheckIV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Spacer Stress HV: {report.spacerCheckHV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Spacer Stress IV: {report.spacerCheckIV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Collapse Resistance HV: {report.collapseCheckHV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Collapse Resistance IV: {report.collapseCheckIV ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                    <div> Bending Stress: {report.bendingCheck ? 'Parameter surpassed' : 'Parameter not surpassed'}</div>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

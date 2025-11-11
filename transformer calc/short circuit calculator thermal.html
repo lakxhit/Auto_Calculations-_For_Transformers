@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Average Temperature Calculation (IS 2026) - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper .bg-blue-100 { background-color: transparent !important; }
+            #print-wrapper .bg-gray-50 { background-color: transparent !important; }
+            #print-wrapper .bg-green-50 { background-color: transparent !important; }
+            #print-wrapper .bg-red-50 { background-color: transparent !important; }
+            #print-wrapper .bg-yellow-50 { background-color: transparent !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        
+        /* Common Styles */
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+            td, th { padding: 8px; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        /* Formal report section style from PRV example */
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+        .input-param-table td { padding: 8px; }
+        /* A simple box for showing the formula, like in the PRV example */
+        .formula-box { background-color: #f9fafb; padding: 12px; border-left: 4px solid #d1d5db; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 0.875rem; }
+         /* Table style from PRV report */
+        .calc-table { width: 100%; margin: 12px 0; }
+        .calc-table td { padding: 6px 0; vertical-align: top; }
+        .calc-table .label { width: 60%; font-weight: 500; }
+        .calc-table .equals { width: 5%; text-align: center; }
+        .calc-table .value { width: 35%; font-weight: bold; }
+        .formula-text { font-family: 'Courier New', monospace; font-size: 0.9em; color: #444; margin: 5px 0; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            // Metadata for all input fields, ordered with indexes
+            const inputFieldsMetadata = {
+                ambientTemperature: { label: "Ambient Temperature", unit: "°C", index: 1 },
+                windingRise: { label: "Winding Rise", unit: "°C", index: 2 },
+                shortCircuitDuration: { label: "Short Circuit Duration (t)", unit: "seconds", index: 3, default: "3" },
+                hvCurrentDensity: { label: "HV Winding - Short Circuit Current Density (J)", unit: "A/mm²", index: 4 },
+                ivCurrentDensity: { label: "IV Winding - Short Circuit Current Density (J)", unit: "A/mm²", index: 5 },
+                maxPermissibleTemp: { label: "Maximum Permissible Temperature (as per Table 3)", unit: "°C", index: 6, default: "250" },
+            };
+
+            // State for form, report, and errors
+            const [formData, setFormData] = React.useState(() => {
+                const initial = {};
+                Object.keys(inputFieldsMetadata).forEach(key => {
+                    initial[key] = inputFieldsMetadata[key].default || '';
+                });
+                return initial;
+            });
+            
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            // Input change handler with validation
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+
+                    if (!trimmedValue) {
+                        errorMessage = 'This field is required.';
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        errorMessage = 'Please enter a valid number.';
+                    }
+                    
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+
+                    return newErrors;
+                });
+            };
+
+            // Full form validation
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        newErrors[key] = 'Please enter a valid number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid && Object.keys(newErrors).length === 0;
+            };
+
+            // Print handler
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            // Main calculation logic
+            const calculateAverageTemperature = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = parseFloat(formData[key]);
+                });
+
+                const results = {};
+                const constant = 106000;
+
+                // 1. Calculate initial winding temperature θₚ
+                results.thetaP = inputs.ambientTemperature + inputs.windingRise;
+
+                // 2. HV Winding calculation
+                // Formula: θ₁ = θₚ + ( 2 × (θₚ + 235) ) / ( ( 106000 / (J² × t) ) - 1 )
+                const hvNumerator = 2 * (results.thetaP + 235);
+                const hvInnerDenominator = constant / (Math.pow(inputs.hvCurrentDensity, 2) * inputs.shortCircuitDuration);
+                const hvDenominator = hvInnerDenominator - 1;
+                results.hvTheta1 = results.thetaP + (hvNumerator / hvDenominator);
+                results.hvWithinLimits = results.hvTheta1 <= inputs.maxPermissibleTemp;
+                
+                // Store intermediate HV calculations
+                results.hvNumerator = hvNumerator;
+                results.hvInnerDenominator = hvInnerDenominator;
+                results.hvDenominator = hvDenominator;
+
+                // 3. IV Winding calculation
+                const ivNumerator = 2 * (results.thetaP + 235);
+                const ivInnerDenominator = constant / (Math.pow(inputs.ivCurrentDensity, 2) * inputs.shortCircuitDuration);
+                const ivDenominator = ivInnerDenominator - 1;
+                results.ivTheta1 = results.thetaP + (ivNumerator / ivDenominator);
+                results.ivWithinLimits = results.ivTheta1 <= inputs.maxPermissibleTemp;
+                
+                // Store intermediate IV calculations
+                results.ivNumerator = ivNumerator;
+                results.ivInnerDenominator = ivInnerDenominator;
+                results.ivDenominator = ivDenominator;
+
+                setReport({ ...results, inputs });
+            };
+            
+            // Renders input row for the form
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center text-sm">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold text-sm">
+                            {meta.label} <span className="text-red-600">*</span>
+                        </td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step="any"
+                                    placeholder={`Enter ${meta.label}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap text-sm">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            // Renders input row for the report's summary table
+            const renderReportInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                const value = formData[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center text-xs">{meta.index}</td>
+                        <td className="w-3/5 border p-2 font-medium text-xs">{meta.label}</td>
+                        <td className="w-1/5 border p-2 text-xs"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+
+            // Renders the main App component
+            return (
+                <div className="container mx-auto p-4 max-w-5xl">
+                    {/* Header */}
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">
+                            Short Circuit Calculator Thermal (IS 2026)
+                        </h1>
+                    </div>
+
+                    {/* Input Form Card */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">
+                            Input Parameters for Average Temperature (θ₁)
+                        </h2>
+                        
+                        <div className="formula-box mb-6">
+                            <h3 className="font-bold text-center text-lg">Formula (IS 2026)</h3>
+                            <div className="text-center text-lg font-mono mt-2">
+                                θ₁ = θₚ + [ 2 × (θₚ + 235) ] / [ ( 106000 / (J² × t) ) - 1 ]
+                            </div>
+                            <div className="mt-4 text-sm">
+                                <p><strong>Where:</strong></p>
+                                <ul className="list-disc ml-6 mt-2 space-y-1">
+                                    <li><strong>θₚ</strong> = Initial winding temperature, in °C (Ambient + Winding Rise)</li>
+                                    <li><strong>J</strong> = Short circuit current density (A/mm²)</li>
+                                    <li><strong>t</strong> = Duration (seconds)</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-6">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(inputFieldsMetadata).map(name => renderInputRow(name))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateAverageTemperature}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Calculation Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Report Section */}
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            {/* Report Header */}
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">
+                                    SHORT CIRCUIT THERMAL CALCULATION REPORT
+                                </h2>
+                            </div>
+
+                            {/* Section 1: Input Parameters Summary */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters Summary</h3>
+                                <table className="w-full text-xs border-collapse input-param-table">
+                                    <tbody>
+                                        {Object.keys(inputFieldsMetadata).map(name => renderReportInputRow(name))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Section 2: Initial Temperature Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Initial Winding Temperature (θₚ) Calculation</h3>
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">θₚ = Ambient Temperature + Winding Rise</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.inputs.ambientTemperature} + {report.inputs.windingRise}</div>
+                                                <div className="value highlight" style={{fontSize: '1.2em'}}>{report.thetaP.toFixed(2)} °C</div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Section 3: HV Winding Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. HV Winding - Average Temperature (θ₁₍ₕᵥ₎)</h3>
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Short Circuit Current Density (J)</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.hvCurrentDensity} A/mm²</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">θ₁₍ₕᵥ₎</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.hvNumerator.toFixed(2)} ] / [ ( 106000 / ({report.inputs.hvCurrentDensity}² × {report.inputs.shortCircuitDuration}) ) - 1 ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.hvNumerator.toFixed(2)} ] / [ {report.hvInnerDenominator.toFixed(4)} - 1 ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.hvNumerator.toFixed(2)} / {report.hvDenominator.toFixed(4)} ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label font-bold">Final Temperature (θ₁₍ₕᵥ₎)</td>
+                                            <td className="equals font-bold">=</td>
+                                            <td className="value highlight" style={{fontSize: '1.2em'}}>{report.hvTheta1.toFixed(2)} °C</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label font-bold">Result</td>
+                                            <td className="equals font-bold">=</td>
+                                            <td className={`value ${report.hvWithinLimits ? 'result-ok' : 'result-fail'}`} style={{fontSize: '1.1em'}}>
+                                                {report.hvWithinLimits 
+                                                    ? `Parameter surpassed (≤ ${report.inputs.maxPermissibleTemp}°C Limit)` 
+                                                    : `Parameter not surpassed (> ${report.inputs.maxPermissibleTemp}°C Limit)`
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Section 4: IV Winding Calculation */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">4. IV Winding - Average Temperature (θ₁₍ᵢᵥ₎)</h3>
+                                <table className="calc-table">
+                                    <tbody>
+                                        <tr>
+                                            <td className="label">Short Circuit Current Density (J)</td>
+                                            <td className="equals">=</td>
+                                            <td className="value">{report.inputs.ivCurrentDensity} A/mm²</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label">θ₁₍ᵢᵥ₎</td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.ivNumerator.toFixed(2)} ] / [ ( 106000 / ({report.inputs.ivCurrentDensity}² × {report.inputs.shortCircuitDuration}) ) - 1 ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.ivNumerator.toFixed(2)} ] / [ {report.ivInnerDenominator.toFixed(4)} - 1 ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="equals">=</td>
+                                            <td>
+                                                <div className="formula-text">{report.thetaP.toFixed(2)} + [ {report.ivNumerator.toFixed(2)} / {report.ivDenominator.toFixed(4)} ]</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label font-bold">Final Temperature (θ₁₍ᵢᵥ₎)</td>
+                                            <td className="equals font-bold">=</td>
+                                            <td className="value highlight" style={{fontSize: '1.2em'}}>{report.ivTheta1.toFixed(2)} °C</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="label font-bold">Result</td>
+                                            <td className="equals font-bold">=</td>
+                                            <td className={`value ${report.ivWithinLimits ? 'result-ok' : 'result-fail'}`} style={{fontSize: '1.1em'}}>
+                                                {report.ivWithinLimits 
+                                                    ? `Parameter surpassed(≤ ${report.inputs.maxPermissibleTemp}°C Limit)` 
+                                                    : `Parameter not surpassed(> ${report.inputs.maxPermissibleTemp}°C Limit)`
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Section 5: Final Summary Table */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">5. Final Summary</h3>
+                                <table className="w-full text-sm border-collapse">
+                                    <thead>
+                                        <tr className="bg-blue-100">
+                                            <th className="border p-3">Winding</th>
+                                            <th className="border p-3">Calculated Avg. Temp (θ₁)</th>
+                                            <th className="border p-3">Max Permissible Temp</th>
+                                            <th className="border p-3">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr className="bg-gray-50">
+                                            <td className="border p-3 font-medium">HV Winding</td>
+                                            <td className="border p-3 text-center highlight text-lg">{report.hvTheta1.toFixed(2)} °C</td>
+                                            <td className="border p-3 text-center">{report.inputs.maxPermissibleTemp.toFixed(0)} °C</td>
+                                            <td className="border p-3 text-center">
+                                                {report.hvWithinLimits 
+                                                    ? <span className="result-ok">Parameter surpassed</span> 
+                                                    : <span className="result-fail">Parameter not surpassed</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border p-3 font-medium">IV Winding</td>
+                                            <td className="border p-3 text-center highlight text-lg">{report.ivTheta1.toFixed(2)} °C</td>
+                                            <td className="border p-s text-center">{report.inputs.maxPermissibleTemp.toFixed(0)} °C</td>
+                                            <td className="border p-3 text-center">
+                                                {report.ivWithinLimits 
+                                                    ? <span className="result-ok">Parameter surpassed</span> 
+                                                    : <span className="result-fail">Parameter not surpassed</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Print Button */}
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>

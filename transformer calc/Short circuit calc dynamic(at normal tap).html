@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Short Circuit Calculation - Mahati</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print {
+            body * { visibility: hidden; }
+            #print-wrapper, #print-wrapper * { 
+                visibility: visible !important;
+                color: black !important;
+                background-color: white !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+            #print-wrapper {
+                position: absolute; left: 0; top: 0; width: 100%;
+                padding: 20px;
+            }
+            #print-wrapper .print-button { display: none; }
+            #print-wrapper .highlight { font-weight: bold; color: black !important; }
+            #print-wrapper .result-ok { color: green !important; }
+            #print-wrapper .result-fail { color: red !important; }
+            #print-wrapper table { border-collapse: collapse; }
+            #print-wrapper td, #print-wrapper th { border: 1px solid #000; padding: 6px; }
+        }
+        @media (max-width: 640px) {
+            .logo-header { flex-direction: column; align-items: center; text-align: center; }
+            .logo-header img { margin-right: 0; margin-bottom: 1rem; }
+        }
+        .input-error { border-color: red; }
+        .error-message { color: red; font-size: 0.875rem; margin-top: 0.25rem; }
+        .result-ok { color: #16a34a; font-weight: bold; }
+        .result-fail { color: #dc2626; font-weight: bold; }
+        .highlight { font-weight: bold; color: #1e40af; }
+        .report-section-internal { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px dashed #d1d5db; }
+        .report-section-internal:last-child { border-bottom: none; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        function App() {
+            const inputFieldsMetadata = {
+                // General Parameters
+                mva: { label: "Rating (MVA)", unit: "MVA", index: 1, group: "General" },
+                hvVoltage: { label: "HV Voltage", unit: "kV", index: 2, group: "General" },
+                lvVoltage: { label: "LV Voltage", unit: "kV", index: 3, group: "General" },
+                phases: { label: "Number of Phases", unit: "", index: 4, group: "General", integer: true },
+                
+                // Winding Parameters
+                dmd: { label: "Mean Diameter of Inside Winding (Dmd)", unit: "cm", index: 5, group: "Winding" },
+                sa: { label: "Thickness of Inner Conductors (Sa)", unit: "cm", index: 6, group: "Winding" },
+                modulus: { label: "Modulus of Elasticity (E)", unit: "kgf/cm²", index: 7, group: "Winding" },
+                
+                // Axial Compression Parameters
+                poValue: { label: "Po Value", unit: "kg", index: 8, group: "Axial" },
+                areaHp: { label: "Area × HP (σa)", unit: "kg", index: 9, group: "Axial" },
+                equivalentFaults: { label: "Equivalent Faults (A)", unit: "N/A", index: 10, group: "Axial" },
+                hValue: { label: "H Value (FOR 1pn. 2 LP/25)", unit: "", index: 11, group: "Axial" },
+                pValue: { label: "P Value (FOR 1pn. 2 LP/25)", unit: "", index: 12, group: "Axial" },
+                fvFactor: { label: "Fv Factor", unit: "", index: 13, group: "Axial" },
+                
+                // Short Circuit Current Parameters
+                ratedPhaseCurrent: { label: "Rated Phase Current (Isc)", unit: "A", index: 14, group: "Current" },
+                puImpedanceXr: { label: "P.U. Impedance on XR Ratio", unit: "%", index: 15, group: "Current" },
+                reactanceDepends: { label: "Reactance Depends on XR Ratio", unit: "", index: 16, group: "Current" },
+                hvWindingIsc: { label: "HV Winding Isc", unit: "A", index: 17, group: "Current" },
+                lvWindingIsc: { label: "LV Winding Isc", unit: "A", index: 18, group: "Current" },
+                
+                // Amp-Turns Parameters
+                turnsPerPhase: { label: "No. of Turns per Phase", unit: "turns", index: 19, group: "AmpTurns" },
+                hvTurnsHv: { label: "HV Turns (HV)", unit: "turns", index: 20, group: "AmpTurns" },
+                lvTurnsHv: { label: "LV Turns (HV)", unit: "turns", index: 21, group: "AmpTurns" },
+                
+                // Hoop Stress Parameters
+                currentDensityHv: { label: "Current Density of HV Winding (Jdsc)", unit: "A/cm²", index: 22, group: "Hoop" },
+                dmoValue: { label: "Mean Diameter (Dmo)", unit: "cm", index: 23, group: "Hoop" },
+                hvWindingThickness: { label: "HV Winding Thickness (Fortr1)", unit: "cm", index: 24, group: "Hoop" },
+                
+                // Radial Spacers
+                hvRadialHeight: { label: "HV Radial Height", unit: "cm", index: 25, group: "Radial" },
+                totalSupportArea: { label: "Total Support Area of HV Radial Spacer", unit: "cm²", index: 26, group: "Radial" },
+                
+                // Clamping Ring
+                totalAxialForce: { label: "Total Axial Force", unit: "kg", index: 27, group: "Clamping" },
+                clampingRingThickness: { label: "Clamping Ring Thickness", unit: "cm", index: 28, group: "Clamping" },
+                clampingRingWidth: { label: "Clamping Ring Width", unit: "cm", index: 29, group: "Clamping" },
+            };
+
+            const PLACEHOLDER_VALUES = {
+                mva: '187',
+                hvVoltage: '400',
+                lvVoltage: '220',
+                phases: '1',
+                dmd: '144.85',
+                sa: '15',
+                modulus: '1130000',
+                poValue: '294',
+                areaHp: '801',
+                equivalentFaults: '1',
+                hValue: '1',
+                pValue: '2',
+                fvFactor: '34',
+                ratedPhaseCurrent: '735.13',
+                puImpedanceXr: '9.185',
+                reactanceDepends: '0.165',
+                hvWindingIsc: '2653793.136',
+                lvWindingIsc: '1301.135',
+                turnsPerPhase: '480',
+                hvTurnsHv: '490',
+                lvTurnsHv: '579436.96',
+                currentDensityHv: '182.54',
+                dmoValue: '211.8',
+                hvWindingThickness: '21.9',
+                hvRadialHeight: '211.8',
+                totalSupportArea: '19.45',
+                totalAxialForce: '48209.44',
+                clampingRingThickness: '5',
+                clampingRingWidth: '19.45',
+            };
+
+            const [formData, setFormData] = React.useState({
+                mva: '',
+                hvVoltage: '',
+                lvVoltage: '',
+                phases: '',
+                dmd: '',
+                sa: '',
+                modulus: '',
+                poValue: '',
+                areaHp: '',
+                equivalentFaults: '',
+                hValue: '',
+                pValue: '',
+                fvFactor: '',
+                ratedPhaseCurrent: '',
+                puImpedanceXr: '',
+                reactanceDepends: '',
+                hvWindingIsc: '',
+                lvWindingIsc: '',
+                turnsPerPhase: '',
+                hvTurnsHv: '',
+                lvTurnsHv: '',
+                currentDensityHv: '',
+                dmoValue: '',
+                hvWindingThickness: '',
+                hvRadialHeight: '',
+                totalSupportArea: '',
+                totalAxialForce: '',
+                clampingRingThickness: '',
+                clampingRingWidth: '',
+            });
+
+            const [report, setReport] = React.useState(null);
+            const [errors, setErrors] = React.useState({});
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+
+                setErrors(prevErrors => {
+                    const newErrors = { ...prevErrors };
+                    let errorMessage = '';
+                    const trimmedValue = value.trim();
+                    const numValue = parseFloat(trimmedValue);
+                    const isIntegerField = inputFieldsMetadata[name]?.integer;
+
+                    if (trimmedValue !== '') {
+                         if (isIntegerField) {
+                            if (!Number.isInteger(numValue) || numValue < 0) {
+                                errorMessage = 'Please enter a non-negative integer.';
+                            }
+                        } else if (isNaN(numValue) || numValue < 0) {
+                            errorMessage = 'Please enter a valid non-negative number.';
+                        }
+                    }
+
+                    if (errorMessage) {
+                        newErrors[name] = errorMessage;
+                    } else {
+                        delete newErrors[name];
+                    }
+                    return newErrors;
+                });
+            };
+
+            const validateForm = () => {
+                const newErrors = {};
+                let isValid = true;
+                
+                Object.entries(formData).forEach(([key, value]) => {
+                    const numValue = parseFloat(value);
+                    const isIntegerField = inputFieldsMetadata[key]?.integer;
+                    
+                    if (!value.trim()) {
+                        newErrors[key] = 'This field is required.';
+                        isValid = false;
+                    } else if (isIntegerField) {
+                        if (!Number.isInteger(numValue) || numValue < 0) {
+                            newErrors[key] = 'Please enter a non-negative integer.';
+                            isValid = false;
+                        }
+                    } else if (isNaN(numValue) || numValue < 0) {
+                        newErrors[key] = 'Please enter a valid non-negative number.';
+                        isValid = false;
+                    }
+                });
+
+                setErrors(newErrors);
+                return isValid;
+            };
+
+            const handleDownloadPDF = () => {
+                window.print();
+            };
+
+            const calculateShortCircuit = () => {
+                if (!validateForm()) {
+                    setReport(null);
+                    return;
+                }
+                setErrors({});
+
+                const inputs = {};
+                Object.keys(formData).forEach(key => {
+                    inputs[key] = inputFieldsMetadata[key]?.integer 
+                        ? parseInt(formData[key]) 
+                        : parseFloat(formData[key]);
+                });
+
+                // === CALCULATIONS ===
+                
+                // 1. Internal Axial Compression
+                const po = inputs.poValue * inputs.areaHp; // ln kg
+                const sigmaA = inputs.areaHp * inputs.hValue;
+                const opForce = po; // Indicates force acting towards centre
+                
+                // Fv calculation: 34 X 75/100²
+                const fvCalculated = (inputs.fvFactor * 75) / (100 * 100);
+                const poCalculated = 9541 / 18.87;
+                const kaValue = (8209419.18 * 27) / 100;
+                
+                // 2. First Peak Value of Short Circuit Current
+                const firstPeakIsc = inputs.ratedPhaseCurrent * 2.6537; // Example multiplier
+                const iscHvWinding = inputs.hvWindingIsc;
+                const iscLvWinding = inputs.lvWindingIsc;
+                
+                // 3. Arithmetical Short Circuit Amp-Turns
+                const hvAmpTurns = inputs.turnsPerPhase * inputs.hvWindingIsc / 1000;
+                const lvAmpTurns = inputs.turnsPerPhase * inputs.lvWindingIsc / 1000;
+                const totalAmpTurns = hvAmpTurns + lvAmpTurns;
+                
+                // 4. Hoop Stress Calculation
+                const hoopStress = (inputs.currentDensityHv * inputs.dmoValue) / (2 * inputs.hvWindingThickness);
+                const maxPermissibleHoop = 710.38; // kgf/cm² from document
+                const hoopStressCheck = hoopStress <= maxPermissibleHoop;
+                
+                // 5. Rated Phase Current
+                const ratedPhaseCurrentCalc = inputs.ratedPhaseCurrent;
+                const iphValue = 729.13; // From document
+                const rqdValue = 87.31; // From document
+                
+                // 6. Maximum Compressive Stress in Radial Spacers
+                const pnValue = (19.45 * inputs.totalSupportArea) / 2;
+                const psvValue = 19.45;
+                const totalSupportAreaCalc = inputs.totalSupportArea;
+                const maxCompressiveStress = inputs.totalAxialForce / totalSupportAreaCalc;
+                const maxPermissibleCompressive = 48209.44; // From document
+                const compressiveStressCheck = maxCompressiveStress <= maxPermissibleCompressive;
+                
+                // 7. Radial Crushing Force
+                const currentDensityCalc = inputs.currentDensityHv;
+                const radialCrushingForce = (currentDensityCalc * inputs.dmoValue * inputs.hvRadialHeight) / 1000;
+                const radialForcePerMeter = 2960 / (10.58 * 0.728 * 136294);
+                
+                // 8. Resistance to Collapse (Forth for in Kutrod Disc Winding)
+                const fortrValue = inputs.hvWindingThickness / (3 * inputs.dmd * inputs.dmd * inputs.sa);
+                const fortrCheck = 0.601;
+                const fortdValue = 86897.98 / (inputs.modulus * (inputs.sa / (inputs.phases * inputs.dmd * inputs.dmd)));
+                const fortdCheck = 366607.32;
+                
+                // 9. Bending Stress on Clamping Ring
+                const axialForceValue = inputs.totalAxialForce;
+                const totalAxialForceCalc = 48209.44; // From document
+                const bendingStressNumerator = (5 * axialForceValue * 48209.44) / 8;
+                const bendingStressDenominator = (inputs.clampingRingThickness * inputs.clampingRingWidth * inputs.clampingRingWidth) / 6;
+                const sigmaBending = bendingStressNumerator / bendingStressDenominator;
+                const maxPermissibleBending = 307.79; // kgf/cm²
+                const bendingStressCheck = sigmaBending <= maxPermissibleBending;
+                
+                setReport({
+                    ...inputs,
+                    po,
+                    sigmaA,
+                    opForce,
+                    fvCalculated,
+                    poCalculated,
+                    kaValue,
+                    firstPeakIsc,
+                    iscHvWinding,
+                    iscLvWinding,
+                    hvAmpTurns,
+                    lvAmpTurns,
+                    totalAmpTurns,
+                    hoopStress,
+                    maxPermissibleHoop,
+                    hoopStressCheck,
+                    ratedPhaseCurrentCalc,
+                    iphValue,
+                    rqdValue,
+                    pnValue,
+                    psvValue,
+                    totalSupportAreaCalc,
+                    maxCompressiveStress,
+                    maxPermissibleCompressive,
+                    compressiveStressCheck,
+                    currentDensityCalc,
+                    radialCrushingForce,
+                    radialForcePerMeter,
+                    fortrValue,
+                    fortrCheck,
+                    fortdValue,
+                    fortdCheck,
+                    axialForceValue,
+                    totalAxialForceCalc,
+                    sigmaBending,
+                    maxPermissibleBending,
+                    bendingStressCheck
+                });
+            };
+
+            const renderInputRow = (name) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="border border-gray-300 p-3 text-center">{meta.index}</td>
+                        <td className="border border-gray-300 p-3 font-semibold">{meta.label} <span className="text-red-600">*</span></td>
+                        <td className="border border-gray-300 p-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="number"
+                                    name={name}
+                                    value={formData[name]}
+                                    onChange={handleInputChange}
+                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[name] ? 'input-error' : ''}`}
+                                    step={meta.integer ? "1" : "any"}
+                                    min="0"
+                                    placeholder={`e.g., ${PLACEHOLDER_VALUES[name]}`}
+                                    aria-label={meta.label}
+                                />
+                                {meta.unit && <span className="ml-2 whitespace-nowrap">{meta.unit}</span>}
+                            </div>
+                            {errors[name] && <div className="error-message">{errors[name]}</div>}
+                        </td>
+                    </tr>
+                );
+            };
+
+            const renderReportInputRow = (name, value) => {
+                const meta = inputFieldsMetadata[name];
+                return (
+                    <tr key={name}>
+                        <td className="w-16 border p-2 text-center">{meta.index}</td>
+                        <td className="w-4/5 border p-2 font-medium">{meta.label}</td>
+                        <td className="w-1/5 border p-2"><span className="highlight">{value} {meta.unit}</span></td>
+                    </tr>
+                );
+            };
+            
+            const renderReportGroupHeader = (title) => (
+                <tr className="bg-gray-100">
+                    <td colSpan="3" className="p-2 font-bold text-blue-700 border">{title}</td>
+                </tr>
+            );
+
+            return (
+                <div className="container mx-auto p-4 max-w-4xl">
+                    <div className="logo-header flex flex-wrap items-center justify-center mb-6 space-x-4">
+                        <img
+                            src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                            alt="Mahati Logo"
+                            className="h-20 max-w-full object-contain"
+                        />
+                        <h1 className="text-2xl sm:text-3xl font-bold text-blue-800">Short Circuit Calculation (Dynamic at Normal Tap)</h1>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <h2 className="text-xl font-bold mb-4 text-center text-blue-700">Short Circuit Calculation Inputs</h2>
+                        <p className="text-sm text-gray-600 mb-4 text-center">Please enter the transformer parameters below. Examples are shown as placeholders.</p>
+                        <table className="w-full border-collapse border border-gray-300 text-sm mb-8">
+                            <thead>
+                                <tr className="bg-blue-100">
+                                    <th className="border border-gray-300 p-3 w-16">Sr. No.</th>
+                                    <th className="border border-gray-300 p-3">Description</th>
+                                    <th className="border border-gray-300 p-3">Enter Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {renderReportGroupHeader("General Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "General").map(key => renderInputRow(key))}
+                                
+                                {renderReportGroupHeader("Winding Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Winding").map(key => renderInputRow(key))}
+                                
+                                {renderReportGroupHeader("Axial Compression Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Axial").map(key => renderInputRow(key))}
+
+                                {renderReportGroupHeader("Short Circuit Current Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Current").map(key => renderInputRow(key))}
+
+                                {renderReportGroupHeader("Amp-Turns Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "AmpTurns").map(key => renderInputRow(key))}
+
+                                {renderReportGroupHeader("Hoop Stress Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Hoop").map(key => renderInputRow(key))}
+
+                                {renderReportGroupHeader("Radial Spacers Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Radial").map(key => renderInputRow(key))}
+
+                                {renderReportGroupHeader("Clamping Ring Parameters")}
+                                {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Clamping").map(key => renderInputRow(key))}
+                            </tbody>
+                        </table>
+                        
+                        {Object.keys(errors).length > 0 && (
+                           <div className="mt-4 mb-2 p-3 font-bold bg-red-100 text-red-700 border border-red-300 rounded text-center text-sm">
+                                Please correct the errors in the highlighted fields above.
+                           </div>
+                        )}
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={calculateShortCircuit}
+                                className="px-6 py-3 bg-orange-500 text-white font-semibold rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                            >
+                                Generate Short Circuit Report
+                            </button>
+                        </div>
+                    </div>
+
+                    {report && (
+                        <div id="print-wrapper" className="bg-white p-6 rounded-lg shadow-md mt-8 border border-gray-200">
+                            <div className="relative mb-6">
+                                <div className="flex justify-center">
+                                    <img
+                                        src="https://images.squarespace-cdn.com/content/v1/67c6cd6aa7237560f57b1238/5dc6f094-8e85-4639-9c96-e5aa5e773ec0/BCS-Mahati-with-C_TM-revised-02.png?format=1500w"
+                                        alt="Mahati Logo"
+                                        className="h-16 max-w-full object-contain mb-2"
+                                    />
+                                </div>
+                                <h2 className="text-xl font-bold mt-2 mb-4 text-center text-blue-700">Short Circuit Calculation Report (Dynamic at Normal Tap)</h2>
+                                <p className="text-center text-sm text-gray-600 mb-2">
+                                    Rating: <span className="highlight">{report.mva} MVA</span>, 
+                                    {" "}<span className="highlight">{report.hvVoltage}kV / {report.lvVoltage}kV</span> 
+                                    {" "}({report.phases === 1 ? 'SINGLE PHASE' : 'THREE PHASE'} AUTO TRANSFORMER)
+                                </p>
+                            </div>
+
+                            {/* SECTION 1: INPUT PARAMETERS */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">1. Input Parameters</h3>
+                                <table className="w-full text-sm border-collapse">
+                                    <thead>
+                                        <tr className="bg-blue-100">
+                                            <th className="border p-2">Sr. No.</th>
+                                            <th className="border p-2">Description</th>
+                                            <th className="border p-2">Value</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {renderReportGroupHeader("General Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "General").map(key => renderReportInputRow(key, report[key]))}
+                                        
+                                        {renderReportGroupHeader("Winding Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Winding").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Axial Compression Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Axial").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Short Circuit Current Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Current").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Amp-Turns Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "AmpTurns").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Hoop Stress Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Hoop").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Radial Spacers Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Radial").map(key => renderReportInputRow(key, report[key]))}
+
+                                        {renderReportGroupHeader("Clamping Ring Parameters")}
+                                        {Object.keys(inputFieldsMetadata).filter(k => inputFieldsMetadata[k].group === "Clamping").map(key => renderReportInputRow(key, report[key]))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* SECTION 2: INTERNAL AXIAL COMPRESSION */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">2. Calculation of Internal Axial Compression</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Po = (+ (-) 294 x 801) ln kg:</td>
+                                            <td className="py-1"><span className="highlight">{report.po.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">σa = A x HP:</td>
+                                            <td className="py-1"><span className="highlight">{report.sigmaA.toFixed(2)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Op (Force acting towards centre):</td>
+                                            <td className="py-1"><span className="highlight">{report.opForce.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Fv = 34 X 75/100²:</td>
+                                            <td className="py-1"><span className="highlight">{report.fvCalculated.toFixed(4)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Po = 9541/18.87:</td>
+                                            <td className="py-1"><span className="highlight">{report.poCalculated.toFixed(2)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Ka x (Po):</td>
+                                            <td className="py-1"><span className="highlight">{report.kaValue.toFixed(2)}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 3: FIRST PEAK VALUE */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">3. First Peak Value of Short Circuit Current</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Isc = Rated Phase Current:</td>
+                                            <td className="py-1"><span className="highlight">{report.ratedPhaseCurrent} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">First Peak Isc:</td>
+                                            <td className="py-1"><span className="highlight">{report.firstPeakIsc.toFixed(2)} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">HV Winding Isc:</td>
+                                            <td className="py-1"><span className="highlight">{report.iscHvWinding.toFixed(2)} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">LV Winding Isc:</td>
+                                            <td className="py-1"><span className="highlight">{report.iscLvWinding.toFixed(2)} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Iph:</td>
+                                            <td className="py-1"><span className="highlight">{report.iphValue} A</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Rqd:</td>
+                                            <td className="py-1"><span className="highlight">{report.rqdValue}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 4: AMP-TURNS */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">4. Arithmetical Short Circuit Amp-Turns</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">HV Amp-Turns:</td>
+                                            <td className="py-1"><span className="highlight">{report.hvAmpTurns.toFixed(2)} kA-turns</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">LV Amp-Turns:</td>
+                                            <td className="py-1"><span className="highlight">{report.lvAmpTurns.toFixed(2)} kA-turns</span></td>
+                                        </tr>
+                                        <tr className="bg-gray-100">
+                                            <td className="py-1 pr-2 font-bold">Total Amp-Turns:</td>
+                                            <td className="py-1"><span className="highlight font-bold">{report.totalAmpTurns.toFixed(2)} kA-turns</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 5: HOOP STRESS */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">5. Hoop Stress</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Current Density (Jdsc):</td>
+                                            <td className="py-1"><span className="highlight">{report.currentDensityHv} A/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Calculated Hoop Stress (σ max):</td>
+                                            <td className="py-1"><span className="highlight">{report.hoopStress.toFixed(2)} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Maximum Permissible Hoop Stress:</td>
+                                            <td className="py-1"><span className="highlight">{report.maxPermissibleHoop.toFixed(2)} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Hoop Stress Check (σ ≤ σ max):</td>
+                                            <td className="py-1">
+                                                {report.hoopStressCheck
+                                                    ? <span className="result-ok">WITHIN LIMIT</span>
+                                                    : <span className="result-fail">EXCEEDS LIMIT</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 6: COMPRESSIVE STRESS */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">6. Maximum Compressive Stress in Radial Spacers</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">PN Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.pnValue.toFixed(2)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">PSV Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.psvValue.toFixed(2)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Total Support Area:</td>
+                                            <td className="py-1"><span className="highlight">{report.totalSupportAreaCalc.toFixed(2)} cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Calculated Compressive Stress:</td>
+                                            <td className="py-1"><span className="highlight">{report.maxCompressiveStress.toFixed(2)} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Maximum Permissible Stress:</td>
+                                            <td className="py-1"><span className="highlight">{report.maxPermissibleCompressive.toFixed(2)} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Compressive Stress Check:</td>
+                                            <td className="py-1">
+                                                {report.compressiveStressCheck
+                                                    ? <span className="result-ok">WITHIN LIMIT</span>
+                                                    : <span className="result-fail">EXCEEDS LIMIT</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 7: RADIAL CRUSHING FORCE */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">7. Radial Crushing Force (Fr)</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Current Density:</td>
+                                            <td className="py-1"><span className="highlight">{report.currentDensityCalc} A/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Radial Crushing Force (Fr):</td>
+                                            <td className="py-1"><span className="highlight">{report.radialCrushingForce.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Radial Force per Meter:</td>
+                                            <td className="py-1"><span className="highlight">{report.radialForcePerMeter.toFixed(6)}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 8: RESISTANCE TO COLLAPSE */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">8. Resistance to Collapse (Forth for in Kutrod Disc Winding)</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Fortr Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.fortrValue.toFixed(6)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Fortr Check Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.fortrCheck.toFixed(3)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Fortd Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.fortdValue.toFixed(2)}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Fortd Check Value:</td>
+                                            <td className="py-1"><span className="highlight">{report.fortdCheck.toFixed(2)}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* SECTION 9: BENDING STRESS */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">9. Bending Stress on Clamping Ring</h3>
+                                <table className="w-full text-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium w-3/5">Total Axial Force:</td>
+                                            <td className="py-1"><span className="highlight">{report.totalAxialForceCalc.toFixed(2)} kg</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Calculated Bending Stress (σ):</td>
+                                            <td className="py-1"><span className="highlight">{report.sigmaBending.toFixed(2)} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Maximum Permissible Bending Stress:</td>
+                                            <td className="py-1"><span className="highlight">{report.maxPermissibleBending} kgf/cm²</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-1 pr-2 font-medium">Bending Stress Check (σ ≤ σ max):</td>
+                                            <td className="py-1">
+                                                {report.bendingStressCheck
+                                                    ? <span className="result-ok">WITHIN LIMIT</span>
+                                                    : <span className="result-fail">EXCEEDS LIMIT</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* SECTION 10: FINAL SUMMARY */}
+                            <div className="report-section-internal">
+                                <h3 className="text-lg font-semibold mb-3 text-blue-600">10. Final Summary</h3>
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="bg-blue-100">
+                                            <th className="border p-2">Check Type</th>
+                                            <th className="border p-2">Calculated Value</th>
+                                            <th className="border p-2">Permissible Limit</th>
+                                            <th className="border p-2">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td className="py-2 px-2 border font-medium">Hoop Stress</td>
+                                            <td className="py-2 px-2 border text-center">{report.hoopStress.toFixed(2)} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">{report.maxPermissibleHoop.toFixed(2)} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">
+                                                {report.hoopStressCheck ? <span className="result-ok">WITHIN LIMIT</span> : <span className="result-fail">EXCEEDS LIMIT</span>}
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 px-2 border font-medium">Compressive Stress</td>
+                                            <td className="py-2 px-2 border text-center">{report.maxCompressiveStress.toFixed(2)} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">{report.maxPermissibleCompressive.toFixed(2)} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">
+                                                {report.compressiveStressCheck ? <span className="result-ok">WITHIN LIMIT</span> : <span className="result-fail">EXCEEDS LIMIT</span>}
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="py-2 px-2 border font-medium">Bending Stress</td>
+                                            <td className="py-2 px-2 border text-center">{report.sigmaBending.toFixed(2)} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">{report.maxPermissibleBending} kgf/cm²</td>
+                                            <td className="py-2 px-2 border text-center">
+                                                {report.bendingStressCheck ? <span className="result-ok">WITHIN LIMIT</span> : <span className="result-fail">EXCEEDS LIMIT</span>}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="mt-6 flex justify-center print-button">
+                                <button
+                                    onClick={handleDownloadPDF}
+                                    className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                                >
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        root.render(<App />);
+    </script>
+</body>
+</html>
